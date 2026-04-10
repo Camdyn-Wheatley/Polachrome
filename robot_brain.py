@@ -12,7 +12,7 @@ Extends unified_tracking.py with:
 Hardware
 --------
   Arduino Nano connected via USB serial running arduino_trainer.ino (PPM output).
-  FS-i6X trainer port wired to Nano D9 (PPM signal) and GND.
+  FS-i6X trainer port wired to Nano D2 (PPM signal) and GND.
 
 Controls (keyboard on Tracker window)
 --------------------------------------
@@ -23,10 +23,12 @@ Controls (keyboard on Tracker window)
   +/-        increase / decrease robot offset (collision box size)
   Click      pick Robot2 color
 
-Serial protocol to Arduino (115200 baud, newline-terminated):
-  "CH1,CH2,CH3\n"
-  CH1 = steer (left/right), CH2 = drive (fwd/back), CH3 = weapon
-  Each value 1000–2000 µs.  1500 = neutral.
+Serial protocol to Arduino (9600 baud, single-character commands):
+  w/s = drive forward/back (CH2 ± STEP)
+  a/d = steer left/right   (CH1 ± STEP)
+  x/z = weapon on/off      (CH3 = 2000/1000)
+  c   = center steer+drive
+  ' ' = emergency stop (all neutral + weapon off)
 
 PATH GEOMETRY
 -------------
@@ -38,9 +40,11 @@ PATH GEOMETRY
 """
 
 import csv
+import glob
 import json
 import math
 import os
+os.environ.setdefault("QT_STYLE_OVERRIDE", "Fusion")
 import signal
 import threading
 import time
@@ -109,7 +113,11 @@ EVASION_OFFSET       = 120
 TARGET_TAG_A         = 3
 TARGET_TAG_B         = 4
 ARDUINO_PORT         = None
-ARDUINO_BAUD         = 115200
+ARDUINO_BAUD         = 9600
+ARDUINO_STEP         = 5       # PWM µs per char command
+CHANNEL_REVERSE_STEER  = False
+CHANNEL_REVERSE_DRIVE  = True   # robot drives backwards by default
+CHANNEL_REVERSE_WEAPON = False
 COLOR_RESAMPLE_INTERVAL = 60
 COLOR_SAMPLE_RADIUS     = 12
 
@@ -126,6 +134,34 @@ TAG_POINTS_3D = np.array([
     [ _h_tag, -_h_tag, 0], [-_h_tag, -_h_tag, 0],
 ], dtype=np.float64)
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# GLOBAL STATE
+# ──────────────────────────────────────────────────────────────────────────────
+_AVAILABLE_CAMERAS = []
+_CURRENT_CAM_INDEX = 0
+_CAM_SWITCH_PENDING = False
+
+path_draw_mode = False
+custom_drawn_path = []
+is_drawing = False
+
+def scan_cameras():
+    global _AVAILABLE_CAMERAS, _CURRENT_CAM_INDEX
+    _AVAILABLE_CAMERAS = []
+    print("[CAM] Scanning for valid video devices...")
+    for path in sorted(glob.glob("/dev/video*")):
+        cap = cv2.VideoCapture(path, cv2.CAP_V4L2)
+        if cap.isOpened():
+            _AVAILABLE_CAMERAS.append(path)
+            cap.release()
+    if not _AVAILABLE_CAMERAS:
+         _AVAILABLE_CAMERAS = [CAMERA_DEVICE]
+    try:
+        _CURRENT_CAM_INDEX = _AVAILABLE_CAMERAS.index(CAMERA_DEVICE)
+    except ValueError:
+        _CURRENT_CAM_INDEX = 0
+    print(f"[CAM] Candidates: {_AVAILABLE_CAMERAS}")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # THREADED CAMERA
@@ -260,13 +296,18 @@ kf2 = KalmanTracker(proc_noise=1.0, meas_noise=8.0)
 # ARDUINO SERIAL OUTPUT
 # ──────────────────────────────────────────────────────────────────────────────
 class ArduinoSerial:
-    """Non-blocking serial writer. Sends CH1,CH2,CH3 packets at ~50 Hz."""
+    """Non-blocking serial writer using single-character protocol."""
 
-    def __init__(self, port=None, baud=115200):
+    def __init__(self, port=None, baud=9600):
         self._ser   = None
         self._lock  = threading.Lock()
-        self._queue = deque(maxlen=1)   # only the latest command matters
+        self._queue = deque(maxlen=1)
         self._stop  = False
+        self._neutral = 1486
+        self._step  = ARDUINO_STEP
+        self._ch1   = self._neutral
+        self._ch2   = self._neutral
+        self._ch3   = WEAPON_OFF_VALUE
 
         if not _HAVE_SERIAL:
             print("[ARDUINO] pyserial missing — serial output disabled.")
@@ -283,7 +324,7 @@ class ArduinoSerial:
 
         try:
             self._ser = serial.Serial(port, baud, timeout=0.1)
-            time.sleep(2.0)   # wait for Arduino reset after DTR
+            time.sleep(2.0)
             print(f"[ARDUINO] Connected on {port} @ {baud}")
         except serial.SerialException as e:
             print(f"[ARDUINO] Could not open {port}: {e}")
@@ -301,20 +342,65 @@ class ArduinoSerial:
                     msg = self._queue.pop()
             if msg and self._ser and self._ser.is_open:
                 try:
-                    self._ser.write(msg.encode())
+                    self._ser.write(msg)
                 except serial.SerialException:
                     pass
-            time.sleep(0.02)   # ~50 Hz
+            time.sleep(0.02)
+
+    def _apply_reversal(self, ch1, ch2, ch3):
+        if CHANNEL_REVERSE_STEER:
+            ch1 = 2 * self._neutral - ch1
+        if CHANNEL_REVERSE_DRIVE:
+            ch2 = 2 * self._neutral - ch2
+        if CHANNEL_REVERSE_WEAPON:
+            ch3 = 2 * self._neutral - ch3
+        return (max(1000, min(2000, ch1)),
+                max(1000, min(2000, ch2)),
+                max(1000, min(2000, ch3)))
 
     def send(self, ch1: int, ch2: int, ch3: int):
         ch1 = max(1000, min(2000, int(ch1)))
         ch2 = max(1000, min(2000, int(ch2)))
         ch3 = max(1000, min(2000, int(ch3)))
-        with self._lock:
-            self._queue.append(f"{ch1},{ch2},{ch3}\n")
+        ch1, ch2, ch3 = self._apply_reversal(ch1, ch2, ch3)
+
+        chars = []
+        # Steer
+        diff1 = ch1 - self._ch1
+        if abs(diff1) >= self._step:
+            n = min(abs(diff1) // self._step, 8)
+            chars.extend(["d" if diff1 > 0 else "a"] * n)
+            self._ch1 += n * self._step * (1 if diff1 > 0 else -1)
+            self._ch1 = max(1000, min(2000, self._ch1))
+        # Drive
+        diff2 = ch2 - self._ch2
+        if abs(diff2) >= self._step:
+            n = min(abs(diff2) // self._step, 8)
+            chars.extend(["w" if diff2 > 0 else "s"] * n)
+            self._ch2 += n * self._step * (1 if diff2 > 0 else -1)
+            self._ch2 = max(1000, min(2000, self._ch2))
+        # Weapon
+        if ch3 != self._ch3:
+            chars.append("x" if ch3 >= 1500 else "z")
+            self._ch3 = ch3
+        # Snap neutral
+        if (ch1 == self._neutral and ch2 == self._neutral
+                and abs(self._ch1 - self._neutral) < self._step * 2
+                and abs(self._ch2 - self._neutral) < self._step * 2):
+            chars = ["c"]
+            self._ch1 = self._neutral
+            self._ch2 = self._neutral
+
+        if chars:
+            with self._lock:
+                self._queue.append("".join(chars).encode())
 
     def send_neutral(self):
-        self.send(1500, 1500, WEAPON_OFF_VALUE)
+        with self._lock:
+            self._queue.append(b" ")
+        self._ch1 = self._neutral
+        self._ch2 = self._neutral
+        self._ch3 = WEAPON_OFF_VALUE
 
     def close(self):
         self._stop = True
@@ -772,46 +858,112 @@ def load_profile():
     _sync_trackbars()
 
 
+_PANEL_W, _PANEL_H = 520, 340
+_SLIDER_MARGIN = 20
+_SLIDER_H = 28
+_SLIDER_GAP = 8
+_BAR_X = 180
+_BAR_W = _PANEL_W - _BAR_X - _SLIDER_MARGIN
+
+_SLIDERS = [
+    ("H Center",     "hc",  0, 179),
+    ("H Tolerance",  "ht",  1,  90),
+    ("S Center",     "sc",  0, 255),
+    ("S Tolerance",  "st",  1, 127),
+    ("V Center",     "vc",  0, 255),
+    ("V Tolerance",  "vt",  1, 127),
+    ("Exposure(0=au)", "exp", 0, 500),
+]
+
+_tuning_values = {
+    "hc": 90, "ht": 15,
+    "sc": 150, "st": 60,
+    "vc": 150, "vt": 60,
+    "exp": 0 if EXPOSURE is None else int(EXPOSURE),
+}
+_tuning_dragging = None
+
+def tuning_mouse_cb(event, x, y, flags, param):
+    global _tuning_dragging, _tuning_values
+    
+    def x_to_val(x_pos, lo, hi):
+        frac = max(0.0, min(1.0, (x_pos - _BAR_X) / max(_BAR_W, 1)))
+        return int(lo + frac * (hi - lo))
+
+    if event == cv2.EVENT_LBUTTONDOWN:
+        for i, (_, key, lo, hi) in enumerate(_SLIDERS):
+            bx1, by1 = _BAR_X, _SLIDER_MARGIN + i*(_SLIDER_H + _SLIDER_GAP) + 4
+            bx2, by2 = _BAR_X + _BAR_W, by1 + _SLIDER_H - 8
+            if bx1 <= x <= bx2 and by1 <= y <= by2:
+                _tuning_dragging = key
+                _tuning_values[key] = x_to_val(x, lo, hi)
+                break
+    elif event == cv2.EVENT_MOUSEMOVE and (flags & cv2.EVENT_FLAG_LBUTTON):
+        if _tuning_dragging:
+            for _, key, lo, hi in _SLIDERS:
+                if key == _tuning_dragging:
+                    _tuning_values[key] = x_to_val(x, lo, hi)
+                    break
+    elif event == cv2.EVENT_LBUTTONUP:
+        _tuning_dragging = None
+
+
 def create_trackbars():
-    cv2.namedWindow(TRACKBAR_WIN, cv2.WINDOW_NORMAL)
-    h = int(picked_hsv[0]) if picked_hsv else 90
-    s = int(picked_hsv[1]) if picked_hsv else 150
-    v = int(picked_hsv[2]) if picked_hsv else 150
-    noop = lambda _: None
-    cv2.createTrackbar("H Center",          TRACKBAR_WIN, h,                    179, noop)
-    cv2.createTrackbar("H Tolerance",       TRACKBAR_WIN, tolerance_r2["h"],     90, noop)
-    cv2.createTrackbar("S Center",          TRACKBAR_WIN, s,                    255, noop)
-    cv2.createTrackbar("S Tolerance",       TRACKBAR_WIN, tolerance_r2["s"],    127, noop)
-    cv2.createTrackbar("V Center",          TRACKBAR_WIN, v,                    255, noop)
-    cv2.createTrackbar("V Tolerance",       TRACKBAR_WIN, tolerance_r2["v"],    127, noop)
-    cv2.createTrackbar("Exposure (0=auto)", TRACKBAR_WIN,
-                       0 if EXPOSURE is None else int(EXPOSURE), 500, noop)
-    cv2.resizeWindow(TRACKBAR_WIN, 520, 340)
+    cv2.namedWindow(TRACKBAR_WIN, cv2.WINDOW_AUTOSIZE)
+    cv2.setMouseCallback(TRACKBAR_WIN, tuning_mouse_cb)
+
+    if picked_hsv:
+        _tuning_values["hc"] = int(picked_hsv[0])
+        _tuning_values["sc"] = int(picked_hsv[1])
+        _tuning_values["vc"] = int(picked_hsv[2])
+    _tuning_values["ht"] = tolerance_r2.get("h", 15)
+    _tuning_values["st"] = tolerance_r2.get("s", 60)
+    _tuning_values["vt"] = tolerance_r2.get("v", 60)
 
 
 def _sync_trackbars():
     if picked_hsv:
-        cv2.setTrackbarPos("H Center", TRACKBAR_WIN, int(picked_hsv[0]))
-        cv2.setTrackbarPos("S Center", TRACKBAR_WIN, int(picked_hsv[1]))
-        cv2.setTrackbarPos("V Center", TRACKBAR_WIN, int(picked_hsv[2]))
-    cv2.setTrackbarPos("H Tolerance", TRACKBAR_WIN, tolerance_r2["h"])
-    cv2.setTrackbarPos("S Tolerance", TRACKBAR_WIN, tolerance_r2["s"])
-    cv2.setTrackbarPos("V Tolerance", TRACKBAR_WIN, tolerance_r2["v"])
+        _tuning_values["hc"] = int(picked_hsv[0])
+        _tuning_values["sc"] = int(picked_hsv[1])
+        _tuning_values["vc"] = int(picked_hsv[2])
+    _tuning_values["ht"] = tolerance_r2.get("h", 15)
+    _tuning_values["st"] = tolerance_r2.get("s", 60)
+    _tuning_values["vt"] = tolerance_r2.get("v", 60)
 
 
 def read_trackbars():
-    hc = cv2.getTrackbarPos("H Center",    TRACKBAR_WIN)
-    ht = cv2.getTrackbarPos("H Tolerance", TRACKBAR_WIN)
-    sc = cv2.getTrackbarPos("S Center",    TRACKBAR_WIN)
-    st = cv2.getTrackbarPos("S Tolerance", TRACKBAR_WIN)
-    vc = cv2.getTrackbarPos("V Center",    TRACKBAR_WIN)
-    vt = cv2.getTrackbarPos("V Tolerance", TRACKBAR_WIN)
+    global tolerance_r2
+    
+    panel = np.full((_PANEL_H, _PANEL_W, 3), (30, 30, 30), dtype=np.uint8)
+    for i, (label, key, lo, hi) in enumerate(_SLIDERS):
+        y = _SLIDER_MARGIN + i * (_SLIDER_H + _SLIDER_GAP)
+        val = _tuning_values[key]
+        bx1, by1 = _BAR_X, y + 4
+        bx2, by2 = _BAR_X + _BAR_W, y + _SLIDER_H - 4
+        
+        cv2.putText(panel, label, (_SLIDER_MARGIN, y + _SLIDER_H - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1)
+        cv2.rectangle(panel, (bx1, by1), (bx2, by2), (60, 60, 60), -1)
+        
+        fill_x = int(_BAR_X + ((val - lo) / max(hi - lo, 1)) * _BAR_W)
+        cv2.rectangle(panel, (bx1, by1), (fill_x, by2), (0, 200, 255), -1)
+        cv2.circle(panel, (fill_x, (by1 + by2) // 2), 8, (255, 255, 255), -1)
+        cv2.circle(panel, (fill_x, (by1 + by2) // 2), 8, (100, 100, 100), 1)
+        cv2.putText(panel, str(val), (bx2 + 6, y + _SLIDER_H - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 200), 1)
+
+    cv2.imshow(TRACKBAR_WIN, panel)
+
+    hc = _tuning_values["hc"]
+    ht = _tuning_values["ht"]
+    sc = _tuning_values["sc"]
+    st = _tuning_values["st"]
+    vc = _tuning_values["vc"]
+    vt = _tuning_values["vt"]
     tolerance_r2["h"] = max(1, ht)
     tolerance_r2["s"] = max(1, st)
     tolerance_r2["v"] = max(1, vt)
     apply_tolerance_r2(hc, sc, vc)
     if _cam_ref is not None:
-        exp = cv2.getTrackbarPos("Exposure (0=auto)", TRACKBAR_WIN)
+        exp = _tuning_values["exp"]
         if exp == 0:
             _cam_ref.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
         else:
@@ -820,13 +972,40 @@ def read_trackbars():
 
 
 def mouse_pick(event, x, y, _flags, _param):
-    global picked_hsv
+    global picked_hsv, is_drawing, custom_drawn_path, CHANNEL_REVERSE_DRIVE, _CURRENT_CAM_INDEX, _CAM_SWITCH_PENDING
+    
+    # Check for custom button clicks
+    fw = FRAME_WIDTH
+    if event == cv2.EVENT_LBUTTONDOWN:
+        if fw - 200 <= x <= fw - 100 and 100 <= y <= 130:
+            CHANNEL_REVERSE_DRIVE = not CHANNEL_REVERSE_DRIVE
+            print(f"[UI] Invert Drive: {CHANNEL_REVERSE_DRIVE}")
+            return
+        if fw - 95 <= x <= fw - 5 and 100 <= y <= 130:
+            if _AVAILABLE_CAMERAS:
+                _CURRENT_CAM_INDEX = (_CURRENT_CAM_INDEX + 1) % len(_AVAILABLE_CAMERAS)
+                _CAM_SWITCH_PENDING = True
+            return
+    
+    if path_draw_mode:
+        if event == cv2.EVENT_LBUTTONDOWN:
+            is_drawing = True
+            custom_drawn_path = [(x, y)]
+        elif event == cv2.EVENT_MOUSEMOVE and is_drawing:
+            custom_drawn_path.append((x, y))
+            if len(custom_drawn_path) > 200: # limit length
+                custom_drawn_path.pop(0)
+        elif event == cv2.EVENT_LBUTTONUP:
+            is_drawing = False
+            custom_drawn_path.append((x, y))
+        return
+
     if event == cv2.EVENT_LBUTTONDOWN and current_hsv_frame is not None:
         h, s, v    = current_hsv_frame[y, x]
         picked_hsv = (int(h), int(s), int(v))
-        cv2.setTrackbarPos("H Center", TRACKBAR_WIN, int(h))
-        cv2.setTrackbarPos("S Center", TRACKBAR_WIN, int(s))
-        cv2.setTrackbarPos("V Center", TRACKBAR_WIN, int(v))
+        _tuning_values["hc"] = int(h)
+        _tuning_values["sc"] = int(s)
+        _tuning_values["vc"] = int(v)
         apply_tolerance_r2(int(h), int(s), int(v))
         print(f"[R2 PICK] HSV {picked_hsv}")
 
@@ -1025,9 +1204,30 @@ def draw_auto_hud(frame, auto_mode, target_id, ch1, ch2, ch3, fps):
     cv2.putText(frame, mode_str,           (fw-190, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.8,  mode_col,       2)
     cv2.putText(frame, f"TGT: TAG {target_id}", (fw-190, 54), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200,200,200), 1)
     cv2.putText(frame, f"CH1:{ch1} CH2:{ch2} CH3:{ch3}", (fw-190, 76), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (160,160,160), 1)
+    
+    # Draw Invert Drive button
+    inv_col = (0, 200, 0) if CHANNEL_REVERSE_DRIVE else (100, 100, 100)
+    cv2.rectangle(frame, (fw - 200, 100), (fw - 100, 130), inv_col, -1)
+    cv2.rectangle(frame, (fw - 200, 100), (fw - 100, 130), (200, 200, 200), 1)
+    cv2.putText(frame, "INVERT", (fw - 182, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+
+    # Draw Cam Switch button
+    cv2.rectangle(frame, (fw - 95, 100), (fw - 5, 130), (150, 50, 50), -1)
+    cv2.rectangle(frame, (fw - 95, 100), (fw - 5, 130), (200, 200, 200), 1)
+    cv2.putText(frame, "CAM++", (fw - 70, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+
+    if path_draw_mode:
+        cv2.putText(frame, "PATH DRAW MODE", (fw // 2 - 120, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 255), 2)
+        cv2.putText(frame, "Click & Drag on Tracker to draw path", (fw // 2 - 160, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
     cv2.putText(frame, f"FPS:{int(fps)}", (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255,255,255), 2)
-    cv2.putText(frame, "A=auto  T=target  B=bounds  +/-=offset  Q=quit",
-                (10, fh-10), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (160,160,160), 1)
+    
+    status_msg = "A=auto T=target B=bounds P=path draw +/-=offset Q=quit"
+    try:
+        status_msg += f" | Cam: {_AVAILABLE_CAMERAS[_CURRENT_CAM_INDEX]}"
+    except IndexError:
+        pass
+    cv2.putText(frame, status_msg, (10, fh-10), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (160,160,160), 1)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1082,11 +1282,14 @@ def log_row(writer, r1, r1s, r2, r2s, ch1, ch2, ch3, auto):
 # MAIN
 # ──────────────────────────────────────────────────────────────────────────────
 def main():
-    global current_hsv_frame, running, _cam_ref
+    global current_hsv_frame, running, _cam_ref, path_draw_mode, _CAM_SWITCH_PENDING
 
     detector = make_detector()
+    scan_cameras()
+    active_device = _AVAILABLE_CAMERAS[_CURRENT_CAM_INDEX] if _AVAILABLE_CAMERAS else CAMERA_DEVICE
+
     try:
-        cam = CameraStream(CAMERA_DEVICE, FRAME_WIDTH, FRAME_HEIGHT)
+        cam = CameraStream(active_device, FRAME_WIDTH, FRAME_HEIGHT)
     except RuntimeError as e:
         print(f"[ERROR] {e}"); return
 
@@ -1113,8 +1316,20 @@ def main():
     ch1 = ch2 = 1500
     ch3 = WEAPON_OFF_VALUE
     last_t = time.time()
+    retreat_end_time = 0.0
 
     while running:
+        if _CAM_SWITCH_PENDING:
+            new_cam = _AVAILABLE_CAMERAS[_CURRENT_CAM_INDEX]
+            print(f"[CAM] Switching to {new_cam}...")
+            cam.release()
+            try:
+                cam = CameraStream(new_cam, FRAME_WIDTH, FRAME_HEIGHT)
+                _cam_ref = cam
+            except RuntimeError as e:
+                print(f"[ERROR] Failed to switch: {e}")
+            _CAM_SWITCH_PENDING = False
+
         frame = cam.read()
         if frame is None:
             time.sleep(0.005); continue
@@ -1188,11 +1403,27 @@ def main():
         # ── Threat evasion ────────────────────────────────────────────────────
         threat_evade = None
         if r1_pos and r2_pos:
-            threat_evade = evasion_offset(r1_pos, r2_pos, r2_vel)
+            dist = math.hypot(r1_pos[0] - r2_pos[0], r1_pos[1] - r2_pos[1])
+            if dist < 60 and now > retreat_end_time:
+                # Contact made: trigger an explicit retreat for 1.5s
+                print(f"[RETIRE] Contact! Retreating for 1.5s.")
+                retreat_end_time = now + 1.5
+                
+            if now < retreat_end_time:
+                # Run away in the direct opposite direction
+                escape_angle = math.atan2(r1_pos[1] - r2_pos[1], r1_pos[0] - r2_pos[0])
+                threat_evade = arena.clamp((r1_pos[0] + math.cos(escape_angle) * EVASION_OFFSET * 1.5,
+                                            r1_pos[1] + math.sin(escape_angle) * EVASION_OFFSET * 1.5))
+            else:
+                threat_evade = evasion_offset(r1_pos, r2_pos, r2_vel)
 
         # ── Control output ────────────────────────────────────────────────────
         if auto_mode and r1_pos:
-            if threat_evade:
+            if path_draw_mode and len(custom_drawn_path) >= 2:
+                pts = np.array(custom_drawn_path, dtype=np.float32)
+                drive_cmd, steer_cmd = pure_pursuit(r1_pos, current_heading, pts)
+                ch3 = WEAPON_OFF_VALUE
+            elif threat_evade:
                 evade_path       = build_evasion_path(r1_pos, threat_evade, arena,
                                                       r1_heading_deg=current_heading)
                 drive_cmd, steer_cmd = pure_pursuit(r1_pos, current_heading, evade_path)
@@ -1244,8 +1475,18 @@ def main():
                                 (int(r2_pos[0]+vx2*3), int(r2_pos[1]+vy2*3)),
                                 (0, 0, 255), 2, tipLength=0.3)
 
-        draw_path(frame, current_path, r2_pos, target_pos, target_id)
-        draw_lookahead(frame, r1_pos, current_path)
+        if not path_draw_mode:
+            draw_path(frame, current_path, r2_pos, target_pos, target_id)
+            draw_lookahead(frame, r1_pos, current_path)
+        else:
+            if len(custom_drawn_path) >= 2:
+                for i in range(len(custom_drawn_path)-1):
+                    cv2.line(frame, custom_drawn_path[i], custom_drawn_path[i+1], (255, 0, 255), 3)
+            # also draw lookahead for the custom path
+            if len(custom_drawn_path) >= 2:
+                pts = np.array(custom_drawn_path, dtype=np.float32)
+                draw_lookahead(frame, r1_pos, pts)
+
         draw_threat_indicator(frame, r2_pos, threat_evade)
         if show_bounds:
             arena.draw(frame)
@@ -1269,6 +1510,13 @@ def main():
             print(f"[TARGET] Switched to TAG {target_id}")
         elif key == ord("b"):
             show_bounds = not show_bounds
+        elif key == ord("p"):
+            path_draw_mode = not path_draw_mode
+            if path_draw_mode:
+                auto_mode = False # Pause auto to draw
+                print("[MODE] Path Draw Enabled. Click and drag in Tracker window.")
+            else:
+                print("[MODE] Path Draw Disabled.")
         elif key in (ord("+"), ord("=")):
             arena.change_offset(+5); current_path = None
         elif key == ord("-"):
