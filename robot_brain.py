@@ -257,7 +257,7 @@ class KalmanTracker:
         self.kf.correct(np.array([[x], [y]], np.float32))
         p = self.kf.predict()
         self.coast = 0
-        return (int(p[0]), int(p[1]))
+        return (int(p[0, 0]), int(p[1, 0]))
 
     def predict(self, dt):
         if not self._init:
@@ -267,7 +267,7 @@ class KalmanTracker:
             return None
         self._set_dt(dt)
         p = self.kf.predict()
-        return (int(p[0]), int(p[1]))
+        return (int(p[0, 0]), int(p[1, 0]))
 
     @property
     def coasting(self):
@@ -279,13 +279,13 @@ class KalmanTracker:
 
     def velocity(self) -> Tuple[float, float]:
         s = self.kf.statePost
-        return float(s[2]), float(s[3])
+        return float(s[2, 0]), float(s[3, 0])
 
     def position_float(self) -> Optional[Tuple[float, float]]:
         if not self._init:
             return None
         s = self.kf.statePost
-        return float(s[0]), float(s[1])
+        return float(s[0, 0]), float(s[1, 0])
 
 
 kf1 = KalmanTracker(proc_noise=0.5, meas_noise=4.0)
@@ -909,7 +909,7 @@ def tuning_mouse_cb(event, x, y, flags, param):
 
 
 def create_trackbars():
-    cv2.namedWindow(TRACKBAR_WIN, cv2.WINDOW_AUTOSIZE | cv2.WINDOW_GUI_NORMAL)
+    cv2.namedWindow(TRACKBAR_WIN, cv2.WINDOW_AUTOSIZE)
     cv2.setMouseCallback(TRACKBAR_WIN, tuning_mouse_cb)
 
     if picked_hsv:
@@ -1297,8 +1297,8 @@ def main():
     arduino  = ArduinoSerial(ARDUINO_PORT, ARDUINO_BAUD)
     r1_color = Robot1ColorTracker()
 
-    cv2.namedWindow("Tracker", cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
-    cv2.namedWindow("Mask",    cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+    cv2.namedWindow("Tracker", cv2.WINDOW_NORMAL)
+    cv2.namedWindow("Mask",    cv2.WINDOW_NORMAL)
     create_trackbars()
     cv2.setMouseCallback("Tracker", mouse_pick)
     load_profile()
