@@ -909,7 +909,7 @@ def tuning_mouse_cb(event, x, y, flags, param):
 
 
 def create_trackbars():
-    cv2.namedWindow(TRACKBAR_WIN, cv2.WINDOW_AUTOSIZE)
+    cv2.namedWindow(TRACKBAR_WIN, cv2.WINDOW_AUTOSIZE | cv2.WINDOW_GUI_NORMAL)
     cv2.setMouseCallback(TRACKBAR_WIN, tuning_mouse_cb)
 
     if picked_hsv:
@@ -1297,8 +1297,8 @@ def main():
     arduino  = ArduinoSerial(ARDUINO_PORT, ARDUINO_BAUD)
     r1_color = Robot1ColorTracker()
 
-    cv2.namedWindow("Tracker", cv2.WINDOW_NORMAL)
-    cv2.namedWindow("Mask",    cv2.WINDOW_NORMAL)
+    cv2.namedWindow("Tracker", cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+    cv2.namedWindow("Mask",    cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
     create_trackbars()
     cv2.setMouseCallback("Tracker", mouse_pick)
     load_profile()
