@@ -2,71 +2,46 @@
 # Combat Robot Controller — Configuration
 # ──────────────────────────────────────────────────────────────────────────────
 
-# Camera
-camera_device: "/dev/video1"
-frame_width: 1280
-frame_height: 720
-exposure: 150          # null for auto-exposure
+# ── Kinect V2 ────────────────────────────────────────────────────────────────
+kinect_pipeline: "opengl"        # Processing backend: opengl, opencl, cpu
 
-# AprilTag detection
-tag_family: "tag25h9"
-tag_size: 0.03302      # metres (1.3 in)
-robot1_tag_ids: [0, 1] # T0 = right side, T1 = left side
-quad_decimate: 2.0
-detector_threads: 2
+# ── ArUco Detection ──────────────────────────────────────────────────────────
+aruco_dict: "DICT_4X4_50"        # OpenCV ArUco dictionary
+robot_tag_top: 0                 # ArUco ID on top of robot
+robot_tag_bottom: 1              # ArUco ID on bottom of robot
+detect_on_ir: true               # Use IR stream for tag detection (lighting-independent)
 
-# ROI tracking
-roi_padding: 180       # px — increased from 150 for fewer missed tags
-roi_reacquire_frames: 6
-
-# Color tracking (Robot 2)
-profile_file: "color_profile.json"
-min_contour_area: 500
-default_tolerance:
-  h: 15
-  s: 60
-  v: 60
-
-# Kalman filter
+# ── Kalman filter ────────────────────────────────────────────────────────────
 max_coast_frames: 30
 
-# Logging
+# ── Logging ──────────────────────────────────────────────────────────────────
 position_log: "positions.csv"
 
-# Arena bounds (pixel coordinates)
+# ── Arena bounds (pixel coordinates — will need recalibration for Kinect) ────
 arena_tl: [50, 50]
-arena_br: [1230, 670]
-robot_offset: 40       # px — safety inset
+arena_br: [462, 374]
+robot_offset: 20                 # px — safety inset
 
-# Path planner
-path_replan_dist: 20   # px — replan when robot moves this much
-lookahead_dist: 80     # px — pure-pursuit lookahead
-approach_standoff: 80  # px — lineup distance behind R2
+# ── Path planner (placeholder — will be rewritten) ──────────────────────────
+path_replan_dist: 20             # px — replan when robot moves this much
+lookahead_dist: 80               # px — pure-pursuit lookahead
+approach_standoff: 80            # px — lineup distance behind opponent
 
-# Motion control (PWM microseconds)
+# ── Motion control (PWM microseconds) ───────────────────────────────────────
 pwm_min: 1000
 pwm_max: 2000
-pwm_neutral: 1500
-max_drive_speed: 400   # µs offset from neutral
-max_turn_speed: 400    # µs offset from neutral
+pwm_neutral: 1486
+max_drive_speed: 400             # µs offset from neutral
+max_turn_speed: 400              # µs offset from neutral
 weapon_on_value: 2000
 weapon_off_value: 1000
 
-# Threat evasion
-threat_cone_deg: 40.0
-evasion_offset: 120    # px
+# ── Arduino serial ───────────────────────────────────────────────────────────
+arduino_port: null               # null for auto-detect
+arduino_baud: 9600
+arduino_step: 5                  # PWM µs per character command
 
-# Target tags
-target_tag_a: 3
-target_tag_b: 4
-
-# Arduino serial
-arduino_port: null     # null for auto-detect
-arduino_baud: 115200
-
-# Robot 1 color fallback
-color_resample_interval: 60
-color_sample_radius: 12
-
-# Camera calibration
-camera_matrix_file: null   # path to camera_matrix.npz, null for estimated
+# ── Channel reversal ────────────────────────────────────────────────────────
+channel_reverse_steer: false
+channel_reverse_drive: true      # robot drives backwards by default
+channel_reverse_weapon: false
