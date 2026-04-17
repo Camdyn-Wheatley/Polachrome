@@ -287,22 +287,23 @@ class KinectStream:
     def _capture_loop(self) -> None:
         """Continuously read frames from the Kinect and store the latest.
 
-        pylibfreenect2 API notes:
-        - waitForNewFrame(milliseconds) — positional arg, NOT a keyword arg named 'timeout'
-        - Returns None on timeout (does not raise)
-        - Frame keys are strings: "color", "ir", "depth" (not FrameType enum values)
+        pylibfreenect2 FrameMap API quirks (version 0.1.4):
+        - waitForNewFrame(frame_map=None, milliseconds=-1)
+          → first positional arg is frame_map, use milliseconds as keyword.
+        - FrameMap does NOT support __contains__ ('x in frames' raises 'Not supported').
+        - Access frames by FrameType enum: frames[FrameType.Color] etc.
+        - String key access frames["color"] works for item get but not 'in' check.
+        - On timeout, waitForNewFrame returns None (does not raise).
         """
         while not self._stop_event.is_set():
-            # Pass timeout as a positional argument — the parameter is named
-            # 'milliseconds', not 'timeout'. Using the wrong keyword causes a
-            # silent TypeError that gets caught below, leaving frames == None.
             try:
-                frames = self._listener.waitForNewFrame(1000)
+                # IMPORTANT: milliseconds is the SECOND parameter (after frame_map).
+                # A bare positional int raises TypeError (expects FrameMap, got int).
+                frames = self._listener.waitForNewFrame(milliseconds=1000)
             except Exception as exc:
                 logger.debug("waitForNewFrame exception: %s", exc)
                 continue
 
-            # On timeout waitForNewFrame returns None (does not raise).
             if frames is None:
                 continue
 
@@ -312,25 +313,31 @@ class KinectStream:
             reg_arr = None
 
             try:
-                # Use string keys — the pylibfreenect2 FrameMap supports both
-                # string keys ("color", "ir", "depth") and FrameType enum values,
-                # but string keys are the documented reliable interface.
-                if self._enable_color and "color" in frames:
-                    raw = frames["color"]
-                    # Kinect color is BGRX (4-channel); drop the X channel.
-                    color_arr = raw.asarray(np.uint8)[:, :, :3].copy()
+                # FrameMap.__contains__ raises 'Not supported' — access by
+                # FrameType enum key directly and catch KeyError if missing.
+                if self._enable_color:
+                    try:
+                        raw = frames[FrameType.Color]
+                        # Kinect color is BGRX (4-channel); drop the X channel.
+                        color_arr = raw.asarray(np.uint8)[:, :, :3].copy()
+                    except KeyError:
+                        pass
 
                 if self._enable_depth:
-                    if "depth" in frames:
-                        depth_arr = frames["depth"].asarray(np.float32).copy()
-                    if "ir" in frames:
-                        ir_arr = frames["ir"].asarray(np.float32).copy()
+                    try:
+                        depth_arr = frames[FrameType.Depth].asarray(np.float32).copy()
+                    except KeyError:
+                        pass
+                    try:
+                        ir_arr = frames[FrameType.Ir].asarray(np.float32).copy()
+                    except KeyError:
+                        pass
 
                 if self._enable_registered and self._registration is not None:
-                    if "color" in frames and "depth" in frames:
+                    if color_arr is not None and depth_arr is not None:
                         self._registration.apply(
-                            frames["color"],
-                            frames["depth"],
+                            frames[FrameType.Color],
+                            frames[FrameType.Depth],
                             self._undistorted,
                             self._registered_frame,
                         )
@@ -347,3 +354,4 @@ class KinectStream:
                     self._ir = ir_arr
                 if reg_arr is not None:
                     self._registered = reg_arr
+
