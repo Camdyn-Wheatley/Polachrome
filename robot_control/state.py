@@ -7,8 +7,8 @@ Stores the latest unified vision state from the ArUco and Depth Segmenter.
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
-from typing import Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Optional, Tuple, List
 
 
 # ── Shutdown event ───────────────────────────────────────────────────────────
@@ -32,3 +32,4 @@ class WorldState:
 
     # System status
     auto_mode: bool = False
+    calibration_points: List[Tuple[int, int]] = field(default_factory=list)

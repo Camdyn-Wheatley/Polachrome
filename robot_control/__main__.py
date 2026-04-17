@@ -43,9 +43,12 @@ def _signal_handler(sig: int, _frame: object) -> None:
 
 
 def _on_mouse_click(event: int, x: int, y: int, flags: int, param: Any) -> None:
-    global _clicked_point
+    global _clicked_point, world_state
     if event == cv2.EVENT_LBUTTONDOWN:
-        _clicked_point = (x, y)
+        if len(world_state.calibration_points) < 4:
+            world_state.calibration_points.append((x, y))
+        else:
+            _clicked_point = (x, y)
 
 
 # ── Vision Helpers ───────────────────────────────────────────────────────────
@@ -209,27 +212,35 @@ def main() -> None:
 
             # 1. Depth Calibration
             if not segmenter.is_calibrated:
-                floor_tag_idx = flat_ids.index(cfg.arena_floor_tag) if cfg.arena_floor_tag in flat_ids else -1
-                
-                if floor_tag_idx >= 0:
+                pts = world_state.calibration_points
+                if len(pts) == 4:
                     calibration_frames.append(depth)
                     if len(calibration_frames) >= 10:
-                        logger.info("Floor tag (ID=%d) found! Calibrating ground plane...", cfg.arena_floor_tag)
+                        logger.info("4 points selected! Calibrating ground plane...")
                         
-                        tag_corners = corners[floor_tag_idx][0].astype(np.int32)
+                        tag_corners = np.array(pts, dtype=np.int32)
                         mask = np.zeros(depth.shape, dtype=np.uint8)
                         cv2.fillConvexPoly(mask, tag_corners, 255)
                         
                         if not segmenter.calibrate(calibration_frames, mask=mask):
                             logger.warning("Calibration failed! Retrying...")
                             calibration_frames.clear()
+                            world_state.calibration_points.clear()
                 else:
                     calibration_frames.clear()
                 
-                # Show waiting screen
+                # Show waiting screen with instructions
                 wait_img = registered.copy()
-                msg = f"Waiting for floor tag (ID={cfg.arena_floor_tag})..."
-                cv2.putText(wait_img, msg, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
+                cv2.putText(wait_img, f"Click 4 corners on the floor: {len(pts)}/4", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
+                
+                for pt in pts:
+                    cv2.circle(wait_img, pt, 5, (0, 255, 0), -1)
+                if len(pts) > 1:
+                    for i in range(len(pts) - 1):
+                        cv2.line(wait_img, pts[i], pts[i+1], (0, 255, 0), 2)
+                if len(pts) == 4:
+                    cv2.line(wait_img, pts[-1], pts[0], (0, 255, 0), 2)
+                    
                 cv2.imshow("Registered Vision", wait_img)
                 cv2.waitKey(1)
                 continue
