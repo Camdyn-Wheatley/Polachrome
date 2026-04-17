@@ -26,7 +26,7 @@ class Config:
     kinect_pipeline: str = "opengl"
 
     # ── ArUco detection ──────────────────────────────────────────────────
-    aruco_dict: str = "DICT_4X4_50"
+    aruco_dict: str = "DICT_APRILTAG_36H11"  # best error correction
     robot_tag_top: int = 0
     robot_tag_bottom: int = 1
     detect_on_ir: bool = False  # False = color camera, True = IR

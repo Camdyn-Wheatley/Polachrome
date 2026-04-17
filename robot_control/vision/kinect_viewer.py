@@ -86,12 +86,24 @@ def _ir_to_display(ir: np.ndarray) -> np.ndarray:
 # ── ArUco detection ──────────────────────────────────────────────────────────
 
 def _build_detector(dict_name: str) -> cv2.aruco.ArucoDetector:
-    """Create an ArUco detector for the named dictionary."""
+    """Create a tuned ArUco detector for the named dictionary.
+
+    Parameter choices:
+    - minMarkerPerimeterRate=0.01  default 0.03 — allows smaller tags in the frame
+    - cornerRefinementMethod=CORNER_REFINE_SUBPIX — improves accuracy under blur/angle
+    """
     dict_id = getattr(cv2.aruco, dict_name, None)
     if dict_id is None:
-        raise ValueError(f"Unknown ArUco dictionary: {dict_name!r}")
+        raise ValueError(
+            f"Unknown ArUco dictionary: {dict_name!r}. "
+            f"Available examples: DICT_4X4_50, DICT_APRILTAG_36H11, DICT_6X6_250"
+        )
     aruco_dict = cv2.aruco.getPredefinedDictionary(dict_id)
     params = cv2.aruco.DetectorParameters()
+    # Allow tags that appear smaller in the frame (e.g. at distance or wide-angle view).
+    params.minMarkerPerimeterRate = 0.01
+    # Subpixel corner refinement — helps with motion blur and perspective skew.
+    params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
     return cv2.aruco.ArucoDetector(aruco_dict, params)
 
 

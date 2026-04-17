@@ -6,7 +6,7 @@
 kinect_pipeline: "opengl"        # Processing backend: opengl, opencl, cpu
 
 # ── ArUco Detection ──────────────────────────────────────────────────────────
-aruco_dict: "DICT_4X4_50"        # OpenCV ArUco dictionary
+aruco_dict: "DICT_APRILTAG_36H11"  # AprilTag 36h11 — best error correction (Hamming dist 11)
 robot_tag_top: 0                 # ArUco ID on top of robot
 robot_tag_bottom: 1              # ArUco ID on bottom of robot
 detect_on_ir: false              # Use color stream for tag detection (false = color, true = IR)
