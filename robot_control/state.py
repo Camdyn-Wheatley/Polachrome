@@ -33,3 +33,4 @@ class WorldState:
     # System status
     auto_mode: bool = False
     calibration_points: List[Tuple[int, int]] = field(default_factory=list)
+    excluded_points: List[Tuple[int, int]] = field(default_factory=list)

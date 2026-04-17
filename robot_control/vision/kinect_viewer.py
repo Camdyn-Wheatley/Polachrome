@@ -63,14 +63,17 @@ def _signal_handler(sig: int, _frame: object) -> None:
 _tracked_centroid: Optional[Tuple[int, int]] = None
 _clicked_point: Optional[Tuple[int, int]] = None
 _calibration_points: List[Tuple[int, int]] = []
+_excluded_points: List[Tuple[int, int]] = []
 
 def _on_mouse_click(event: int, x: int, y: int, flags: int, param: Any) -> None:
-    global _clicked_point, _calibration_points
+    global _clicked_point, _calibration_points, _excluded_points
     if event == cv2.EVENT_LBUTTONDOWN:
         if len(_calibration_points) < 4:
             _calibration_points.append((x, y))
         else:
             _clicked_point = (x, y)
+    elif event == cv2.EVENT_MBUTTONDOWN:
+        _excluded_points.append((x, y))
 
 
 # ── Image helpers ────────────────────────────────────────────────────────────
@@ -288,7 +291,17 @@ def main() -> None:
             else:
                 obstacles = []
                 if depth is not None and segmenter.is_calibrated:
-                    obstacles = segmenter.find_obstacles(depth)
+                    raw_obstacles = segmenter.find_obstacles(depth)
+                    global _excluded_points
+                    for obs in raw_obstacles:
+                        ox, oy, ow, oh = obs["bbox"]
+                        excluded = False
+                        for ex, ey in _excluded_points:
+                            if ox <= ex <= ox + ow and oy <= ey <= oy + oh:
+                                excluded = True
+                                break
+                        if not excluded:
+                            obstacles.append(obs)
 
             # ── Obstacle Selection & Tracking ─────────────────────────────
             global _clicked_point, _tracked_centroid
@@ -435,6 +448,9 @@ def main() -> None:
                         x, y, bw, bh = obs["bbox"]
                         color = (0, 255, 0) if obs == tracked_obs else (0, 0, 255)
                         cv2.rectangle(disp_reg, (x, y), (x + bw, y + bh), color, 2)
+                        
+                    for ex, ey in _excluded_points:
+                        cv2.drawMarker(disp_reg, (ex, ey), (0, 0, 255), cv2.MARKER_CROSS, 10, 2)
                         
                     cv2.putText(
                         disp_reg,

@@ -49,6 +49,8 @@ def _on_mouse_click(event: int, x: int, y: int, flags: int, param: Any) -> None:
             world_state.calibration_points.append((x, y))
         else:
             _clicked_point = (x, y)
+    elif event == cv2.EVENT_MBUTTONDOWN:
+        world_state.excluded_points.append((x, y))
 
 
 # ── Vision Helpers ───────────────────────────────────────────────────────────
@@ -246,7 +248,19 @@ def main() -> None:
                 continue
 
             # 2. Obstacle Segmentation
-            obstacles = segmenter.find_obstacles(depth)
+            obstacles = []
+            if depth is not None and segmenter.is_calibrated:
+                raw_obstacles = segmenter.find_obstacles(depth)
+                # Filter out excluded obstacles
+                for obs in raw_obstacles:
+                    ox, oy, ow, oh = obs["bbox"]
+                    excluded = False
+                    for ex, ey in world_state.excluded_points:
+                        if ox <= ex <= ox + ow and oy <= ey <= oy + oh:
+                            excluded = True
+                            break
+                    if not excluded:
+                        obstacles.append(obs)
 
             # 3. Handle Mouse Click (Target Lock)
             if _clicked_point is not None:
