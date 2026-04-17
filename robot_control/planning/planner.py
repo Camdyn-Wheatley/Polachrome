@@ -70,20 +70,16 @@ class Planner:
         ch1 = neutral + turn_pwm
 
         # ── Drive (CH2) ──────────────────────────────────────────────────────
-        # Drive forward if opponent is further than standoff distance.
-        if distance > self.cfg.approach_standoff:
-            # Slow down driving if we need to turn sharply (>45 deg)
-            speed_factor = max(0.0, 1.0 - (abs(angle_err) / (math.pi / 4)))
-            
-            drive_effort = distance / 300.0  # normalize somewhat to screen pixels
-            drive_effort = min(1.0, drive_effort)
-            
-            drive_pwm = int(drive_effort * self.cfg.max_drive_speed * speed_factor)
-            ch2 = neutral + drive_pwm
+        # Disabled for testing: only steering is active.
+        # if distance > self.cfg.approach_standoff:
+        #     speed_factor = max(0.0, 1.0 - (abs(angle_err) / (math.pi / 4)))
+        #     drive_effort = min(1.0, distance / 300.0)
+        #     drive_pwm = int(drive_effort * self.cfg.max_drive_speed * speed_factor)
+        #     ch2 = neutral + drive_pwm
 
         # ── Weapon (CH3) ─────────────────────────────────────────────────────
-        # Fire weapon if opponent is close AND we are pointing roughly at them.
-        if distance <= self.cfg.approach_standoff * 1.5 and abs(angle_err) < math.radians(20):
-            ch3 = self.cfg.weapon_on_value
+        # Disabled for testing.
+        # if distance <= self.cfg.approach_standoff * 1.5 and abs(angle_err) < math.radians(20):
+        #     ch3 = self.cfg.weapon_on_value
 
         return ch1, ch2, ch3
