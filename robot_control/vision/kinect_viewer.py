@@ -41,7 +41,7 @@ import logging
 import signal
 import sys
 import time
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -59,6 +59,14 @@ def _signal_handler(sig: int, _frame: object) -> None:
     global _running
     logger.warning("Signal %s — shutting down viewer...", signal.Signals(sig).name)
     _running = False
+
+_tracked_centroid: Optional[Tuple[int, int]] = None
+_clicked_point: Optional[Tuple[int, int]] = None
+
+def _on_mouse_click(event: int, x: int, y: int, flags: int, param: Any) -> None:
+    global _clicked_point
+    if event == cv2.EVENT_LBUTTONDOWN:
+        _clicked_point = (x, y)
 
 
 # ── Image helpers ────────────────────────────────────────────────────────────
@@ -234,6 +242,9 @@ def main() -> None:
     cv2.resizeWindow("IR + ArUco", 512, 424)
     cv2.resizeWindow("Registered + ArUco", 512, 424)
 
+    cv2.setMouseCallback("Depth", _on_mouse_click)
+    cv2.setMouseCallback("Registered + ArUco", _on_mouse_click)
+
     fps_time = time.time()
     frame_count = 0
     fps = 0.0
@@ -261,6 +272,35 @@ def main() -> None:
             obstacles = []
             if depth is not None and segmenter.is_calibrated:
                 obstacles = segmenter.find_obstacles(depth)
+
+            # ── Obstacle Selection & Tracking ─────────────────────────────
+            global _clicked_point, _tracked_centroid
+            if _clicked_point is not None:
+                cx, cy = _clicked_point
+                _clicked_point = None
+                best_obs = None
+                for obs in obstacles:
+                    ox, oy, ow, oh = obs["bbox"]
+                    if ox <= cx <= ox + ow and oy <= cy <= oy + oh:
+                        best_obs = obs
+                        break
+                if best_obs:
+                    _tracked_centroid = best_obs["centroid"]
+                    logger.info("Tracking obstacle at %s", _tracked_centroid)
+                else:
+                    _tracked_centroid = None
+                    logger.info("Cleared tracked obstacle")
+
+            tracked_obs = None
+            if _tracked_centroid is not None and obstacles:
+                closest = min(obstacles, key=lambda o: (o["centroid"][0] - _tracked_centroid[0])**2 + (o["centroid"][1] - _tracked_centroid[1])**2)
+                dist_sq = (closest["centroid"][0] - _tracked_centroid[0])**2 + (closest["centroid"][1] - _tracked_centroid[1])**2
+                if dist_sq < 10000:  # within 100px
+                    tracked_obs = closest
+                    _tracked_centroid = closest["centroid"]
+                else:
+                    _tracked_centroid = None
+                    logger.info("Lost track of obstacle")
 
             # FPS counter.
             frame_count += 1
@@ -330,8 +370,9 @@ def main() -> None:
                     disp_depth[mask] = (disp_depth[mask].astype(np.float32) * 0.5 + np.array([0, 200, 0]) * 0.5).astype(np.uint8)
                     for obs in obstacles:
                         x, y, bw, bh = obs["bbox"]
-                        cv2.rectangle(disp_depth, (x, y), (x + bw, y + bh), (0, 0, 255), 2)
-                        cv2.putText(disp_depth, f"H={obs['mean_height_mm']:.0f}mm", (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+                        color = (0, 255, 0) if obs == tracked_obs else (0, 0, 255)
+                        cv2.rectangle(disp_depth, (x, y), (x + bw, y + bh), color, 2)
+                        cv2.putText(disp_depth, f"H={obs['mean_height_mm']:.0f}mm", (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
                 cv2.putText(
                     disp_depth,
@@ -375,7 +416,8 @@ def main() -> None:
                 if segmenter.is_calibrated:
                     for obs in obstacles:
                         x, y, bw, bh = obs["bbox"]
-                        cv2.rectangle(disp_reg, (x, y), (x + bw, y + bh), (0, 0, 255), 2)
+                        color = (0, 255, 0) if obs == tracked_obs else (0, 0, 255)
+                        cv2.rectangle(disp_reg, (x, y), (x + bw, y + bh), color, 2)
                         
                 cv2.putText(
                     disp_reg,
