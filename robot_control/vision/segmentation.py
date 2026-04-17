@@ -37,7 +37,7 @@ class DepthSegmenter:
         self._predicted_ground: Optional[np.ndarray] = None
         
         # Morphological kernel for cleaning up obstacle masks
-        self._kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        self._kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
 
     @property
     def is_calibrated(self) -> bool:
