@@ -84,16 +84,40 @@ echo "[5/5] Installing pylibfreenect2 Python package..."
 
 # Use the project venv if it exists.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "${SCRIPT_DIR}/.venv/bin/pip" ]; then
-    echo "  Using project venv at ${SCRIPT_DIR}/.venv"
-    "${SCRIPT_DIR}/.venv/bin/pip" install pylibfreenect2
+VENV_PIP="${SCRIPT_DIR}/.venv/bin/pip"
+
+if [ ! -f "${VENV_PIP}" ]; then
+    echo "  ERROR: project venv not found at ${SCRIPT_DIR}/.venv"
+    echo "  Create it first: python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"
+    exit 1
+fi
+echo "  Using project venv at ${SCRIPT_DIR}/.venv"
+
+# pylibfreenect2 0.1.4 requires:
+#   - Cython < 3  (Cython 3.x rejects its .pyx GIL patterns)
+#   - setuptools < 75  (newer setuptools removed pkg_resources from the namespace)
+#   - --no-build-isolation so the venv's numpy/Cython are visible during build
+echo "  Installing build dependencies (Cython<3, setuptools<75)..."
+"${VENV_PIP}" install "Cython<3" "setuptools<75" 2>&1 | tail -3
+
+echo "  Building and installing pylibfreenect2..."
+"${VENV_PIP}" install --no-build-isolation pylibfreenect2
+
+# ── Step 6: Add LD_LIBRARY_PATH to venv activate ────────────────────────────
+echo ""
+echo "[6/6] Configuring venv to find libfreenect2 at runtime..."
+ACTIVATE="${SCRIPT_DIR}/.venv/bin/activate"
+LD_SNIPPET="export LD_LIBRARY_PATH=\"\${LD_LIBRARY_PATH:+\$LD_LIBRARY_PATH:}${INSTALL_PREFIX}/lib\""
+if ! grep -q "libfreenect2 shared library path" "${ACTIVATE}" 2>/dev/null; then
+    printf "\n# libfreenect2 shared library path\n%s\n" "${LD_SNIPPET}" >> "${ACTIVATE}"
+    echo "  Added LD_LIBRARY_PATH to ${ACTIVATE}"
 else
-    pip install pylibfreenect2
+    echo "  LD_LIBRARY_PATH already in ${ACTIVATE}"
 fi
 
 echo ""
 echo "============================================"
-echo "  Kinect V2 setup complete!"
+echo "  Kinect V2 setup complete! (6 steps)"
 echo ""
 echo "  Test with:"
 echo "    source ~/.bashrc"
