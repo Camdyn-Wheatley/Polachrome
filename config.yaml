@@ -10,6 +10,7 @@ aruco_dict: "DICT_APRILTAG_25H9"   # AprilTag 25h9 — matches robot's existing 
 robot_tag_top: 0                 # AprilTag ID on top of robot
 robot_tag_bottom: 1              # AprilTag ID on bottom of robot
 detect_on_ir: false              # Use color stream for tag detection (false = color, true = IR)
+flip_horizontal: true            # Mirror all frames horizontally (Kinect mounted inverted)
 
 # ── Kalman filter ────────────────────────────────────────────────────────────
 max_coast_frames: 30

@@ -120,6 +120,7 @@ class KinectStream:
         enable_color: bool = True,
         enable_depth: bool = True,
         enable_registered: bool = True,
+        flip_horizontal: bool = False,
     ) -> None:
         if not _HAVE_FREENECT2:
             raise RuntimeError(
@@ -149,6 +150,7 @@ class KinectStream:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._started = False
+        self._flip_horizontal = flip_horizontal
 
     # ── Lifecycle ────────────────────────────────────────────────────────
 
@@ -346,6 +348,16 @@ class KinectStream:
                 self._listener.release(frames)
 
             with self._lock:
+                if self._flip_horizontal:
+                    import cv2  # local import — cv2 is a viewer dep, avoid top-level coupling
+                    if color_arr is not None:
+                        color_arr = cv2.flip(color_arr, 1)
+                    if depth_arr is not None:
+                        depth_arr = cv2.flip(depth_arr, 1)
+                    if ir_arr is not None:
+                        ir_arr = cv2.flip(ir_arr, 1)
+                    if reg_arr is not None:
+                        reg_arr = cv2.flip(reg_arr, 1)
                 if color_arr is not None:
                     self._color = color_arr
                 if depth_arr is not None:
@@ -354,4 +366,3 @@ class KinectStream:
                     self._ir = ir_arr
                 if reg_arr is not None:
                     self._registered = reg_arr
-

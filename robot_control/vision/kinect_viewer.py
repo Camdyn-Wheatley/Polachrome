@@ -207,6 +207,7 @@ def main() -> None:
         enable_color=True,
         enable_depth=True,
         enable_registered=True,
+        flip_horizontal=cfg.flip_horizontal,
     )
 
     try:

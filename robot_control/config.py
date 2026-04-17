@@ -29,7 +29,8 @@ class Config:
     aruco_dict: str = "DICT_APRILTAG_25H9"  # AprilTag 25h9
     robot_tag_top: int = 0
     robot_tag_bottom: int = 1
-    detect_on_ir: bool = False  # False = color camera, True = IR
+    detect_on_ir: bool = False      # False = color camera, True = IR
+    flip_horizontal: bool = True    # Mirror all frames (Kinect mounted inverted)
 
     # ── Kalman filter ────────────────────────────────────────────────────
     max_coast_frames: int = 30
