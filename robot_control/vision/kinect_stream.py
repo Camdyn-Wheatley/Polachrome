@@ -285,12 +285,25 @@ class KinectStream:
     # ── Internal capture loop ───────────────────────────────────────────
 
     def _capture_loop(self) -> None:
-        """Continuously read frames from the Kinect and store the latest."""
+        """Continuously read frames from the Kinect and store the latest.
+
+        pylibfreenect2 API notes:
+        - waitForNewFrame(milliseconds) — positional arg, NOT a keyword arg named 'timeout'
+        - Returns None on timeout (does not raise)
+        - Frame keys are strings: "color", "ir", "depth" (not FrameType enum values)
+        """
         while not self._stop_event.is_set():
+            # Pass timeout as a positional argument — the parameter is named
+            # 'milliseconds', not 'timeout'. Using the wrong keyword causes a
+            # silent TypeError that gets caught below, leaving frames == None.
             try:
-                frames = self._listener.waitForNewFrame(timeout=1000)
-            except Exception:
-                # Timeout or device disconnected.
+                frames = self._listener.waitForNewFrame(1000)
+            except Exception as exc:
+                logger.debug("waitForNewFrame exception: %s", exc)
+                continue
+
+            # On timeout waitForNewFrame returns None (does not raise).
+            if frames is None:
                 continue
 
             color_arr = None
@@ -299,22 +312,25 @@ class KinectStream:
             reg_arr = None
 
             try:
-                if self._enable_color and FrameType.Color in frames:
-                    raw = frames[FrameType.Color]
-                    # Kinect color is BGRX (4-channel); drop alpha.
+                # Use string keys — the pylibfreenect2 FrameMap supports both
+                # string keys ("color", "ir", "depth") and FrameType enum values,
+                # but string keys are the documented reliable interface.
+                if self._enable_color and "color" in frames:
+                    raw = frames["color"]
+                    # Kinect color is BGRX (4-channel); drop the X channel.
                     color_arr = raw.asarray(np.uint8)[:, :, :3].copy()
 
                 if self._enable_depth:
-                    if FrameType.Depth in frames:
-                        depth_arr = frames[FrameType.Depth].asarray(np.float32).copy()
-                    if FrameType.Ir in frames:
-                        ir_arr = frames[FrameType.Ir].asarray(np.float32).copy()
+                    if "depth" in frames:
+                        depth_arr = frames["depth"].asarray(np.float32).copy()
+                    if "ir" in frames:
+                        ir_arr = frames["ir"].asarray(np.float32).copy()
 
                 if self._enable_registered and self._registration is not None:
-                    if FrameType.Color in frames and FrameType.Depth in frames:
+                    if "color" in frames and "depth" in frames:
                         self._registration.apply(
-                            frames[FrameType.Color],
-                            frames[FrameType.Depth],
+                            frames["color"],
+                            frames["depth"],
                             self._undistorted,
                             self._registered_frame,
                         )
