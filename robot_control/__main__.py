@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 
 # Global state for UI interaction
 world_state = WorldState()
+_tracked_centroid: Optional[Tuple[int, int]] = None
+_tracked_height_mm: Optional[float] = None
 _clicked_point: Optional[Tuple[int, int]] = None
 
 
@@ -43,7 +45,7 @@ def _signal_handler(sig: int, _frame: object) -> None:
 
 
 def _on_mouse_click(event: int, x: int, y: int, flags: int, param: Any) -> None:
-    global _clicked_point, world_state
+    global _clicked_point, _tracked_centroid, _tracked_height_mm, world_state
     if event == cv2.EVENT_LBUTTONDOWN:
         if len(world_state.calibration_points) < 4:
             world_state.calibration_points.append((x, y))
@@ -51,6 +53,11 @@ def _on_mouse_click(event: int, x: int, y: int, flags: int, param: Any) -> None:
             _clicked_point = (x, y)
     elif event == cv2.EVENT_MBUTTONDOWN:
         world_state.excluded_points.append((x, y))
+    elif event == cv2.EVENT_RBUTTONDOWN:
+        _tracked_centroid = None
+        _tracked_height_mm = None
+        _clicked_point = None
+        logger.info("Cleared target lock")
 
 
 # ── Vision Helpers ───────────────────────────────────────────────────────────
@@ -139,7 +146,7 @@ def _draw_hud(img: np.ndarray, state: WorldState, ch1: int, ch2: int, ch3: int, 
 # ── Main Loop ────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    global _clicked_point, world_state
+    global _clicked_point, _tracked_centroid, _tracked_height_mm, world_state
 
     parser = argparse.ArgumentParser(description="Autonomous Combat Robot Controller")
     parser.add_argument("--config", type=str, default=None, help="Path to config.yaml")
@@ -266,38 +273,67 @@ def main() -> None:
             # 3. Handle Mouse Click (Target Lock)
             if _clicked_point is not None:
                 cx, cy = _clicked_point
-                _clicked_point = None
-                best_obs = None
                 for obs in obstacles:
                     ox, oy, ow, oh = obs["bbox"]
                     if ox <= cx <= ox + ow and oy <= cy <= oy + oh:
-                        best_obs = obs
+                        _tracked_centroid = (ox + ow // 2, oy + oh // 2)
+                        _tracked_height_mm = obs["mean_height_mm"]
+                        logger.info("Locked obstacle at %s (Height: %.1f mm)", _tracked_centroid, _tracked_height_mm)
                         break
-                if best_obs:
-                    world_state.opponent_pos = best_obs["centroid"]
-                    world_state.opponent_area = best_obs["area"]
-                    world_state.opponent_height = best_obs["mean_height_mm"]
-                    logger.info("Locked on target at %s", world_state.opponent_pos)
-                else:
-                    world_state.opponent_pos = None
-                    logger.info("Cleared target lock")
+                _clicked_point = None
 
-            # Update tracked target position
+            # 4. Height Filtering
+            if _tracked_height_mm is not None:
+                height_tolerance = 25.0
+                filtered_obstacles = []
+                for obs in obstacles:
+                    if abs(obs["mean_height_mm"] - _tracked_height_mm) <= height_tolerance:
+                        filtered_obstacles.append(obs)
+                obstacles = filtered_obstacles
+
             tracked_obs = None
-            if world_state.opponent_pos is not None and obstacles:
-                # Find closest obstacle to last known position
-                tx, ty = world_state.opponent_pos
-                closest = min(obstacles, key=lambda o: (o["centroid"][0] - tx)**2 + (o["centroid"][1] - ty)**2)
-                dist_sq = (closest["centroid"][0] - tx)**2 + (closest["centroid"][1] - ty)**2
-                
-                if dist_sq < 10000:  # within 100px
-                    tracked_obs = closest
-                    world_state.opponent_pos = closest["centroid"]
-                    world_state.opponent_area = closest["area"]
-                    world_state.opponent_height = closest["mean_height_mm"]
+            if _tracked_centroid is not None and obstacles:
+                # Find the closest obstacle to the last tracked centroid
+                tx, ty = _tracked_centroid
+                best_dist = float("inf")
+                for obs in obstacles:
+                    cx, cy = obs["centroid"]
+                    dist = (cx - tx) ** 2 + (cy - ty) ** 2
+                    if dist < best_dist and dist < 10000:  # 100px radius
+                        best_dist = dist
+                        tracked_obs = obs
+
+                if tracked_obs is not None:
+                    _tracked_centroid = tracked_obs["centroid"]
+                    # Update height with EMA
+                    _tracked_height_mm = 0.9 * _tracked_height_mm + 0.1 * tracked_obs["mean_height_mm"]
                 else:
-                    world_state.opponent_pos = None
-                    logger.info("Lost track of opponent target")
+                    logger.info("Lost spatial track, falling back to global height search")
+                    _tracked_centroid = None
+            
+            # 5. Global Reacquisition
+            if _tracked_centroid is None and _tracked_height_mm is not None and obstacles:
+                # We have a registered height, but no spatial lock. Search for best match.
+                best_diff = float("inf")
+                best_obs = None
+                for obs in obstacles:
+                    diff = abs(obs["mean_height_mm"] - _tracked_height_mm)
+                    if diff < best_diff:
+                        best_diff = diff
+                        best_obs = obs
+                
+                if best_obs is not None:
+                    tracked_obs = best_obs
+                    _tracked_centroid = tracked_obs["centroid"]
+                    _tracked_height_mm = 0.9 * _tracked_height_mm + 0.1 * tracked_obs["mean_height_mm"]
+                    logger.info("Reacquired obstacle at %s (Height: %.1f mm)", _tracked_centroid, _tracked_height_mm)
+            
+            if tracked_obs is not None:
+                world_state.opponent_pos = tracked_obs["centroid"]
+                world_state.opponent_area = tracked_obs["area"]
+                world_state.opponent_height = tracked_obs["mean_height_mm"]
+            else:
+                world_state.opponent_pos = None
 
             # 4. Robot ArUco Detection
             old_pos = world_state.robot_pos
