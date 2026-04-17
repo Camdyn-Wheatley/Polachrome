@@ -89,21 +89,29 @@ class DepthSegmenter:
             idx = np.random.choice(n_valid, 3, replace=False)
             r = rows[idx].astype(np.float64)
             c = cols[idx].astype(np.float64)
-            d = depths[idx].astype(np.float64)
+            
+            # Inverse depth!
+            inv_d = 1.0 / depths[idx].astype(np.float64)
 
-            # Solve: d = a*c + b*r + const  →  [c r 1] @ [a b const]^T = d
+            # Solve: 1/d = a*c + b*r + const  →  [c r 1] @ [a b const]^T = 1/d
             A = np.column_stack([c, r, np.ones(3)])
             try:
-                plane = np.linalg.solve(A, d)
+                plane = np.linalg.solve(A, inv_d)
             except np.linalg.LinAlgError:
                 continue
 
             a, b, const = plane
 
             # Compute residuals
-            predicted = a * cols.astype(np.float64) + b * rows.astype(np.float64) + const
-            residuals = np.abs(depths.astype(np.float64) - predicted)
-            inlier_count = np.sum(residuals < inlier_threshold_mm)
+            predicted_inv = a * cols.astype(np.float64) + b * rows.astype(np.float64) + const
+            # Avoid division by zero if plane intersects 0
+            valid_pred = predicted_inv > 1e-6
+            
+            inlier_count = 0
+            if np.any(valid_pred):
+                predicted = 1.0 / predicted_inv[valid_pred]
+                residuals = np.abs(depths.astype(np.float64)[valid_pred] - predicted)
+                inlier_count = np.sum(residuals < inlier_threshold_mm)
 
             if inlier_count > best_inliers:
                 best_inliers = inlier_count
@@ -117,9 +125,12 @@ class DepthSegmenter:
         
         # Precompute the predicted ground depth map for fast real-time subtraction
         a, b, c = self._plane_coeffs
-        self._predicted_ground = a * np.arange(w)[None, :] + b * np.arange(h)[:, None] + c
+        predicted_ground_inv = a * np.arange(w)[None, :] + b * np.arange(h)[:, None] + c
+        # Clip to avoid division by zero
+        predicted_ground_inv = np.clip(predicted_ground_inv, 1e-6, np.inf)
+        self._predicted_ground = 1.0 / predicted_ground_inv
         
-        logger.info("Ground plane calibrated: depth = %.4f*col + %.4f*row + %.1f", a, b, c)
+        logger.info("Ground plane (1/Z) calibrated: 1/depth = %.2e*col + %.2e*row + %.2e", a, b, c)
         logger.info("RANSAC inliers: %d / %d (%.1f%%)", best_inliers, n_valid, 100 * best_inliers / n_valid)
         return True
 
