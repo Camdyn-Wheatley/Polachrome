@@ -5,6 +5,11 @@
 # ── Kinect V2 ────────────────────────────────────────────────────────────────
 kinect_pipeline: "opengl"        # Processing backend: opengl, opencl, cpu
 
+# ── Depth Segmentation ───────────────────────────────────────────────────────
+arena_max_depth_mm: 3500         # Maximum depth to consider (ignores walls beyond this)
+obstacle_min_height_mm: 25.0     # Minimum height above ground to be considered an obstacle
+obstacle_min_area_px: 100        # Minimum pixel area to filter out noise
+
 # ── ArUco Detection ──────────────────────────────────────────────────────────
 aruco_dict: "DICT_APRILTAG_25H9"   # AprilTag 25h9 — matches robot's existing tags
 robot_tag_top: 0                 # AprilTag ID on top of robot

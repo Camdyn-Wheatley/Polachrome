@@ -25,6 +25,11 @@ class Config:
     # ── Kinect V2 ────────────────────────────────────────────────────────
     kinect_pipeline: str = "opengl"
 
+    # ── Depth Segmentation ───────────────────────────────────────────────
+    arena_max_depth_mm: int = 3500
+    obstacle_min_height_mm: float = 25.0
+    obstacle_min_area_px: int = 100
+
     # ── ArUco detection ──────────────────────────────────────────────────
     aruco_dict: str = "DICT_APRILTAG_25H9"  # AprilTag 25h9
     robot_tag_top: int = 0

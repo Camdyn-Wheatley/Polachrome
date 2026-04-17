@@ -48,6 +48,7 @@ import numpy as np
 
 from robot_control.config import load_config
 from robot_control.vision.kinect_stream import KinectStream
+from robot_control.vision.segmentation import DepthSegmenter
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +211,13 @@ def main() -> None:
         flip_horizontal=cfg.flip_horizontal,
     )
 
+    segmenter = DepthSegmenter(
+        max_depth_mm=cfg.arena_max_depth_mm,
+        obstacle_min_height_mm=cfg.obstacle_min_height_mm,
+        obstacle_min_area_px=cfg.obstacle_min_area_px,
+    )
+    calibration_frames: List[np.ndarray] = []
+
     try:
         stream.start()
     except RuntimeError as exc:
@@ -240,6 +248,19 @@ def main() -> None:
             if color is None and depth is None:
                 time.sleep(0.01)
                 continue
+
+            # ── Depth Calibration ─────────────────────────────────────────
+            if depth is not None and not segmenter.is_calibrated:
+                calibration_frames.append(depth)
+                if len(calibration_frames) >= 10:
+                    logger.info("Calibrating ground plane with 10 frames...")
+                    if not segmenter.calibrate(calibration_frames):
+                        logger.warning("Calibration failed! Retrying...")
+                        calibration_frames.clear()
+            
+            obstacles = []
+            if depth is not None and segmenter.is_calibrated:
+                obstacles = segmenter.find_obstacles(depth)
 
             # FPS counter.
             frame_count += 1
@@ -304,6 +325,14 @@ def main() -> None:
             # ── Depth window ──────────────────────────────────────────────
             if depth is not None:
                 disp_depth = _depth_to_colormap(depth)
+                if segmenter.is_calibrated:
+                    mask = segmenter.get_ground_mask(depth)
+                    disp_depth[mask] = (disp_depth[mask].astype(np.float32) * 0.5 + np.array([0, 200, 0]) * 0.5).astype(np.uint8)
+                    for obs in obstacles:
+                        x, y, bw, bh = obs["bbox"]
+                        cv2.rectangle(disp_depth, (x, y), (x + bw, y + bh), (0, 0, 255), 2)
+                        cv2.putText(disp_depth, f"H={obs['mean_height_mm']:.0f}mm", (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+
                 cv2.putText(
                     disp_depth,
                     f"Depth 512x424  FPS: {fps:.1f}",
@@ -343,6 +372,11 @@ def main() -> None:
                         disp_reg, corners, ids,
                         cfg.robot_tag_top, cfg.robot_tag_bottom,
                     )
+                if segmenter.is_calibrated:
+                    for obs in obstacles:
+                        x, y, bw, bh = obs["bbox"]
+                        cv2.rectangle(disp_reg, (x, y), (x + bw, y + bh), (0, 0, 255), 2)
+                        
                 cv2.putText(
                     disp_reg,
                     f"Registered 512x424  FPS: {fps:.1f}",
