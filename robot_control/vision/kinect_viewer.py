@@ -62,11 +62,15 @@ def _signal_handler(sig: int, _frame: object) -> None:
 
 _tracked_centroid: Optional[Tuple[int, int]] = None
 _clicked_point: Optional[Tuple[int, int]] = None
+_calibration_points: List[Tuple[int, int]] = []
 
 def _on_mouse_click(event: int, x: int, y: int, flags: int, param: Any) -> None:
-    global _clicked_point
+    global _clicked_point, _calibration_points
     if event == cv2.EVENT_LBUTTONDOWN:
-        _clicked_point = (x, y)
+        if len(_calibration_points) < 4:
+            _calibration_points.append((x, y))
+        else:
+            _clicked_point = (x, y)
 
 
 # ── Image helpers ────────────────────────────────────────────────────────────
@@ -261,17 +265,30 @@ def main() -> None:
                 continue
 
             # ── Depth Calibration ─────────────────────────────────────────
+            global _calibration_points
             if depth is not None and not segmenter.is_calibrated:
-                calibration_frames.append(depth)
-                if len(calibration_frames) >= 10:
-                    logger.info("Calibrating ground plane with 10 frames...")
-                    if not segmenter.calibrate(calibration_frames):
-                        logger.warning("Calibration failed! Retrying...")
-                        calibration_frames.clear()
-            
-            obstacles = []
-            if depth is not None and segmenter.is_calibrated:
-                obstacles = segmenter.find_obstacles(depth)
+                if len(_calibration_points) == 4:
+                    calibration_frames.append(depth)
+                    if len(calibration_frames) >= 10:
+                        logger.info("4 points selected! Calibrating ground plane...")
+                        
+                        tag_corners = np.array(_calibration_points, dtype=np.int32)
+                        mask = np.zeros(depth.shape, dtype=np.uint8)
+                        cv2.fillConvexPoly(mask, tag_corners, 255)
+                        
+                        if not segmenter.calibrate(calibration_frames, mask=mask):
+                            logger.warning("Calibration failed! Retrying...")
+                            calibration_frames.clear()
+                            _calibration_points.clear()
+                else:
+                    calibration_frames.clear()
+                
+                # We skip object tracking while calibrating
+                obstacles = []
+            else:
+                obstacles = []
+                if depth is not None and segmenter.is_calibrated:
+                    obstacles = segmenter.find_obstacles(depth)
 
             # ── Obstacle Selection & Tracking ─────────────────────────────
             global _clicked_point, _tracked_centroid
@@ -419,12 +436,23 @@ def main() -> None:
                         color = (0, 255, 0) if obs == tracked_obs else (0, 0, 255)
                         cv2.rectangle(disp_reg, (x, y), (x + bw, y + bh), color, 2)
                         
-                cv2.putText(
-                    disp_reg,
-                    f"Registered 512x424  FPS: {fps:.1f}",
-                    (10, 25),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1,
-                )
+                    cv2.putText(
+                        disp_reg,
+                        f"Registered 512x424  FPS: {fps:.1f}",
+                        (10, 25),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1,
+                    )
+                else:
+                    # Draw calibration UI
+                    cv2.putText(disp_reg, f"Click 4 corners on the floor: {len(_calibration_points)}/4", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
+                    for pt in _calibration_points:
+                        cv2.circle(disp_reg, pt, 5, (0, 255, 0), -1)
+                    if len(_calibration_points) > 1:
+                        for i in range(len(_calibration_points) - 1):
+                            cv2.line(disp_reg, _calibration_points[i], _calibration_points[i+1], (0, 255, 0), 2)
+                    if len(_calibration_points) == 4:
+                        cv2.line(disp_reg, _calibration_points[-1], _calibration_points[0], (0, 255, 0), 2)
+                        
                 cv2.imshow("Registered + ArUco", disp_reg)
 
             key = cv2.waitKey(1) & 0xFF
