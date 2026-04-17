@@ -1,19 +1,14 @@
 """
 state.py — Runtime state containers for the combat robot controller.
 
-Replaces all module-level mutable globals with explicit, passable state objects.
+Stores the latest unified vision state from the ArUco and Depth Segmenter.
 """
 
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Tuple
-
-import numpy as np
-
-from robot_control.filters import KalmanTracker
-from robot_control.arena import ArenaBounds
 
 
 # ── Shutdown event ───────────────────────────────────────────────────────────
@@ -22,31 +17,18 @@ shutdown_event = threading.Event()
 
 
 @dataclass
-class TrackingState:
-    """Mutable state for the detection/tracking pipeline."""
+class WorldState:
+    """Snapshot of the tracked objects in the arena."""
+    
+    # Our robot
+    robot_pos: Optional[Tuple[int, int]] = None
+    robot_heading: Optional[float] = None       # angle in radians
+    robot_upright: bool = True                  # True if top tag is visible
+    
+    # Opponent
+    opponent_pos: Optional[Tuple[int, int]] = None
+    opponent_area: int = 0
+    opponent_height: float = 0.0
 
-    kf1: KalmanTracker
-    kf2: KalmanTracker
-    arena: ArenaBounds
-
-    # Robot orientation (determined by which ArUco tag is visible)
-    robot_upright: bool = True  # True = top tag visible, False = bottom tag
-
-    # Source of the latest R1 / R2 positions (for logging/debug)
-    r1_source: str = ""
-    r2_source: str = ""
-
-
-@dataclass
-class AppState:
-    """Mutable state for the main application loop."""
-
+    # System status
     auto_mode: bool = False
-    show_bounds: bool = True
-    current_path: Optional[np.ndarray] = None
-    last_r1_path: Optional[Tuple[int, int]] = None
-    last_r2_path: Optional[Tuple[int, int]] = None
-    current_heading: float = 0.0
-    ch1: int = 1500
-    ch2: int = 1500
-    ch3: int = 1000
