@@ -262,9 +262,23 @@ def main() -> None:
                 if color is not None:
                     grey_color = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
                     corners, ids, _ = _detect_aruco(detector, grey_color)
+                else:
+                    logger.warning("Color frame is None — cannot run detection")
 
-            if ids:
-                logger.debug("Detected ArUco tags: %s", ids)
+            # Periodic INFO-level status to the terminal (every 2 s).
+            if elapsed >= 1.0:  # reuses the FPS elapsed window
+                if ids:
+                    logger.info(
+                        "DETECTED %d tag(s): ids=%s  dict=%s",
+                        len(ids), ids, cfg.aruco_dict,
+                    )
+                else:
+                    src = "IR" if cfg.detect_on_ir else "Color"
+                    logger.info(
+                        "No tags detected  src=%s  dict=%s  color_avail=%s  ir_avail=%s",
+                        src, cfg.aruco_dict,
+                        color is not None, ir is not None,
+                    )
 
             # ── Color window ──────────────────────────────────────────────
             if color is not None:

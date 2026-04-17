@@ -6,9 +6,9 @@
 kinect_pipeline: "opengl"        # Processing backend: opengl, opencl, cpu
 
 # ── ArUco Detection ──────────────────────────────────────────────────────────
-aruco_dict: "DICT_4X4_50"         # 4x4 ArUco — matches physically printed tags
-robot_tag_top: 17                # ArUco ID on top of robot    (update to match your tags)
-robot_tag_bottom: 37             # ArUco ID on bottom of robot (update to match your tags)
+aruco_dict: "DICT_APRILTAG_25H9"   # AprilTag 25h9 — matches robot's existing tags
+robot_tag_top: 0                 # AprilTag ID on top of robot
+robot_tag_bottom: 1              # AprilTag ID on bottom of robot
 detect_on_ir: false              # Use color stream for tag detection (false = color, true = IR)
 
 # ── Kalman filter ────────────────────────────────────────────────────────────

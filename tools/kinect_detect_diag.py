@@ -26,7 +26,7 @@ log = logging.getLogger("detect_diag")
 
 # ── Dictionaries to try ──────────────────────────────────────────────────────
 DICTS_TO_TRY = [
-    "DICT_APRILTAG_25H9",
+    "DICT_APRILTAG_25H9",   # user's existing robot tags
     "DICT_APRILTAG_36H11",
     "DICT_APRILTAG_36H10",
     "DICT_APRILTAG_16H5",
