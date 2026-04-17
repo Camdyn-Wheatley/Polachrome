@@ -29,6 +29,7 @@ class Config:
     arena_max_depth_mm: int = 3500
     obstacle_min_height_mm: float = 12.0
     obstacle_min_area_px: int = 25
+    obstacle_max_area_px: int = 5000
 
     # ── ArUco detection ──────────────────────────────────────────────────
     aruco_dict: str = "DICT_APRILTAG_25H9"  # AprilTag 25h9

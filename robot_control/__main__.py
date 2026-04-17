@@ -167,6 +167,7 @@ def main() -> None:
         max_depth_mm=cfg.arena_max_depth_mm,
         obstacle_min_height_mm=cfg.obstacle_min_height_mm,
         obstacle_min_area_px=cfg.obstacle_min_area_px,
+        obstacle_max_area_px=cfg.obstacle_max_area_px,
     )
     
     detector = _build_detector(cfg.aruco_dict)

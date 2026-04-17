@@ -230,6 +230,7 @@ def main() -> None:
         max_depth_mm=cfg.arena_max_depth_mm,
         obstacle_min_height_mm=cfg.obstacle_min_height_mm,
         obstacle_min_area_px=cfg.obstacle_min_area_px,
+        obstacle_max_area_px=cfg.obstacle_max_area_px,
     )
     calibration_frames: List[np.ndarray] = []
 
@@ -243,11 +244,17 @@ def main() -> None:
     cv2.namedWindow("Depth", cv2.WINDOW_NORMAL)
     cv2.namedWindow("IR + ArUco", cv2.WINDOW_NORMAL)
     cv2.namedWindow("Registered + ArUco", cv2.WINDOW_NORMAL)
+    cv2.namedWindow("Settings", cv2.WINDOW_NORMAL)
 
     cv2.resizeWindow("Color", 960, 540)
     cv2.resizeWindow("Depth", 512, 424)
     cv2.resizeWindow("IR + ArUco", 512, 424)
     cv2.resizeWindow("Registered + ArUco", 512, 424)
+    cv2.resizeWindow("Settings", 400, 200)
+    
+    cv2.createTrackbar("Min Height (mm)", "Settings", int(cfg.obstacle_min_height_mm), 100, lambda x: None)
+    cv2.createTrackbar("Min Area (px)", "Settings", cfg.obstacle_min_area_px, 1000, lambda x: None)
+    cv2.createTrackbar("Max Area (px)", "Settings", cfg.obstacle_max_area_px, 50000, lambda x: None)
 
     cv2.setMouseCallback("Depth", _on_mouse_click)
     cv2.setMouseCallback("Registered + ArUco", _on_mouse_click)
@@ -258,6 +265,15 @@ def main() -> None:
 
     try:
         while _running:
+            # Update settings from trackbars
+            try:
+                segmenter.obstacle_min_height_mm = float(cv2.getTrackbarPos("Min Height (mm)", "Settings"))
+                segmenter.obstacle_min_area_px = int(cv2.getTrackbarPos("Min Area (px)", "Settings"))
+                segmenter.obstacle_max_area_px = int(cv2.getTrackbarPos("Max Area (px)", "Settings"))
+            except cv2.error:
+                # Ignore errors if window is closed early
+                pass
+                
             color = stream.read_color()
             depth = stream.read_depth()
             ir = stream.read_ir()

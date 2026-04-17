@@ -28,10 +28,12 @@ class DepthSegmenter:
         max_depth_mm: int = 3500,
         obstacle_min_height_mm: float = 25.0,
         obstacle_min_area_px: int = 100,
+        obstacle_max_area_px: int = 0,
     ) -> None:
         self.max_depth_mm = max_depth_mm
         self.obstacle_min_height_mm = obstacle_min_height_mm
         self.obstacle_min_area_px = obstacle_min_area_px
+        self.obstacle_max_area_px = obstacle_max_area_px
 
         self._plane_coeffs: Optional[Tuple[float, float, float]] = None
         self._predicted_ground: Optional[np.ndarray] = None
@@ -171,6 +173,8 @@ class DepthSegmenter:
         for cnt in contours:
             area = cv2.contourArea(cnt)
             if area < self.obstacle_min_area_px:
+                continue
+            if self.obstacle_max_area_px > 0 and area > self.obstacle_max_area_px:
                 continue
                 
             x, y, bw, bh = cv2.boundingRect(cnt)
