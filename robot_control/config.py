@@ -29,7 +29,7 @@ class Config:
     aruco_dict: str = "DICT_4X4_50"
     robot_tag_top: int = 0
     robot_tag_bottom: int = 1
-    detect_on_ir: bool = True
+    detect_on_ir: bool = False  # False = color camera, True = IR
 
     # ── Kalman filter ────────────────────────────────────────────────────
     max_coast_frames: int = 30

@@ -5,11 +5,15 @@ Displays four windows showing the raw sensor data from a connected Kinect V2:
 
   - **Color**:       1920×1080 colour image
   - **Depth**:       512×424 depth map (colourised with TURBO palette)
-  - **IR**:          512×424 infrared image — ArUco tags detected and boxed here
+  - **IR**:          512×424 infrared image — ArUco boxes overlaid when detect_on_ir=True
   - **Registered**:  512×424 colour image warped into depth-camera coordinates.
                      Every pixel here has a matching depth value from the Depth
-                     window (same resolution, same view). ArUco boxes are also
-                     drawn here since IR and Registered share the same pixel space.
+                     window (same resolution, same view). ArUco boxes overlaid
+                     when detect_on_ir=True (shares coordinate space with IR).
+
+ArUco detection source (set by config detect_on_ir):
+  - detect_on_ir=False  → detect on the 1920×1080 Color frame; boxes on Color window.
+  - detect_on_ir=True   → detect on the 512×424 IR frame; boxes on IR + Registered.
 
 What is the Registered frame?
   The colour (RGB) and depth/IR cameras are physically offset by ~25 mm on the
@@ -234,15 +238,18 @@ def main() -> None:
                 fps_time = now
 
             # ── ArUco detection ───────────────────────────────────────────
-            # Detect on IR if enabled (lighting-independent), else on registered.
+            # detect_on_ir=False → detect on the 1920×1080 colour frame.
+            # detect_on_ir=True  → detect on the 512×424 IR frame.
             corners: List = []
             ids: List[int] = []
-            if ir is not None and cfg.detect_on_ir:
-                grey = _ir_to_uint8(ir)
-                corners, ids, _ = _detect_aruco(detector, grey)
-            elif registered is not None and not cfg.detect_on_ir:
-                grey_reg = cv2.cvtColor(registered, cv2.COLOR_BGR2GRAY)
-                corners, ids, _ = _detect_aruco(detector, grey_reg)
+            if cfg.detect_on_ir:
+                if ir is not None:
+                    grey = _ir_to_uint8(ir)
+                    corners, ids, _ = _detect_aruco(detector, grey)
+            else:
+                if color is not None:
+                    grey_color = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
+                    corners, ids, _ = _detect_aruco(detector, grey_color)
 
             if ids:
                 logger.debug("Detected ArUco tags: %s", ids)
@@ -250,11 +257,20 @@ def main() -> None:
             # ── Color window ──────────────────────────────────────────────
             if color is not None:
                 disp_color = color.copy()
+                # Draw ArUco boxes on the colour window when detecting on colour.
+                if not cfg.detect_on_ir:
+                    _draw_detections(
+                        disp_color, corners, ids,
+                        cfg.robot_tag_top, cfg.robot_tag_bottom,
+                    )
+                tag_count = len(ids)
+                status = f"{tag_count} tag(s)" if tag_count else "no tags"
+                src_label = "IR" if cfg.detect_on_ir else "Color"
                 cv2.putText(
                     disp_color,
-                    f"Color 1920x1080  FPS: {fps:.1f}",
-                    (20, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2,
+                    f"Color 1920x1080  [{src_label} detection] {status}  FPS: {fps:.1f}",
+                    (20, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 2,
                 )
                 cv2.imshow("Color", disp_color)
 
@@ -270,11 +286,18 @@ def main() -> None:
                 cv2.imshow("Depth", disp_depth)
 
             # ── IR + ArUco window ─────────────────────────────────────────
+            # Boxes drawn here only when detecting on IR (same coordinate space).
             if ir is not None:
                 disp_ir = _ir_to_display(ir)
-                _draw_detections(disp_ir, corners, ids, cfg.robot_tag_top, cfg.robot_tag_bottom)
-                tag_count = len(ids)
-                status = f"{tag_count} tag(s)" if tag_count else "no tags"
+                if cfg.detect_on_ir:
+                    _draw_detections(
+                        disp_ir, corners, ids,
+                        cfg.robot_tag_top, cfg.robot_tag_bottom,
+                    )
+                tag_count = len(ids) if cfg.detect_on_ir else 0
+                status = f"{tag_count} tag(s)" if (cfg.detect_on_ir and tag_count) else (
+                    "detection on Color" if not cfg.detect_on_ir else "no tags"
+                )
                 cv2.putText(
                     disp_ir,
                     f"IR 512x424  {status}  FPS: {fps:.1f}",
@@ -284,11 +307,15 @@ def main() -> None:
                 cv2.imshow("IR + ArUco", disp_ir)
 
             # ── Registered + ArUco window ─────────────────────────────────
-            # IR and Registered share the same 512×424 coordinate space, so the
-            # same detection corners can be drawn on both without transformation.
+            # IR and Registered share the same 512×424 coordinate space, so
+            # boxes drawn here only when detecting on IR.
             if registered is not None:
                 disp_reg = registered.copy()
-                _draw_detections(disp_reg, corners, ids, cfg.robot_tag_top, cfg.robot_tag_bottom)
+                if cfg.detect_on_ir:
+                    _draw_detections(
+                        disp_reg, corners, ids,
+                        cfg.robot_tag_top, cfg.robot_tag_bottom,
+                    )
                 cv2.putText(
                     disp_reg,
                     f"Registered 512x424  FPS: {fps:.1f}",
