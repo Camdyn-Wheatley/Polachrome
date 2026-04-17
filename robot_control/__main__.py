@@ -202,18 +202,34 @@ def main() -> None:
                 frame_count = 0
                 fps_time = now
 
+            # Pre-compute ArUco detections for both calibration and robot tracking
+            grey_reg = cv2.cvtColor(registered, cv2.COLOR_BGR2GRAY)
+            corners, ids, _ = detector.detectMarkers(grey_reg)
+            flat_ids = ids.flatten().tolist() if ids is not None else []
+
             # 1. Depth Calibration
             if not segmenter.is_calibrated:
-                calibration_frames.append(depth)
-                if len(calibration_frames) >= 10:
-                    logger.info("Calibrating ground plane with 10 frames...")
-                    if not segmenter.calibrate(calibration_frames):
-                        logger.warning("Calibration failed! Retrying...")
-                        calibration_frames.clear()
+                floor_tag_idx = flat_ids.index(cfg.arena_floor_tag) if cfg.arena_floor_tag in flat_ids else -1
+                
+                if floor_tag_idx >= 0:
+                    calibration_frames.append(depth)
+                    if len(calibration_frames) >= 10:
+                        logger.info("Floor tag (ID=%d) found! Calibrating ground plane...", cfg.arena_floor_tag)
+                        
+                        tag_corners = corners[floor_tag_idx][0].astype(np.int32)
+                        mask = np.zeros(depth.shape, dtype=np.uint8)
+                        cv2.fillConvexPoly(mask, tag_corners, 255)
+                        
+                        if not segmenter.calibrate(calibration_frames, mask=mask):
+                            logger.warning("Calibration failed! Retrying...")
+                            calibration_frames.clear()
+                else:
+                    calibration_frames.clear()
                 
                 # Show waiting screen
                 wait_img = registered.copy()
-                cv2.putText(wait_img, "Waiting for floor calibration...", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
+                msg = f"Waiting for floor tag (ID={cfg.arena_floor_tag})..."
+                cv2.putText(wait_img, msg, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
                 cv2.imshow("Registered Vision", wait_img)
                 cv2.waitKey(1)
                 continue
@@ -258,14 +274,8 @@ def main() -> None:
                     logger.info("Lost track of opponent target")
 
             # 4. Robot ArUco Detection
-            # Always detect on 'registered' or 'color'. Registered is better since 
-            # it matches the coordinate space of the Depth segmenter exactly.
-            grey_reg = cv2.cvtColor(registered, cv2.COLOR_BGR2GRAY)
-            corners, ids, _ = detector.detectMarkers(grey_reg)
-            
-            # Fallback coordinate system if tracking gets lost
             old_pos = world_state.robot_pos
-            _detect_robot(corners, ids.flatten().tolist() if ids is not None else [], cfg, world_state)
+            _detect_robot(corners, flat_ids, cfg, world_state)
             
             if world_state.robot_pos is None and old_pos is not None:
                 # ArUco missing this frame, we could coast using Kalman but for now we'll just wait

@@ -44,11 +44,12 @@ class DepthSegmenter:
         """Returns True if the ground plane has been calibrated."""
         return self._plane_coeffs is not None
 
-    def calibrate(self, depth_frames: List[np.ndarray], iterations: int = 500, inlier_threshold_mm: float = 15.0) -> bool:
+    def calibrate(self, depth_frames: List[np.ndarray], mask: Optional[np.ndarray] = None, iterations: int = 500, inlier_threshold_mm: float = 15.0) -> bool:
         """Calibrate the ground plane using RANSAC on a set of depth frames.
         
         Averages the provided frames to reduce noise, then fits a plane 
-        equation: depth = a*col + b*row + c
+        equation: depth = a*col + b*row + c.
+        If `mask` is provided, only pixels where mask > 0 are used.
         
         Returns True if successful, False otherwise.
         """
@@ -69,6 +70,9 @@ class DepthSegmenter:
 
         h, w = depth_avg.shape
         valid = (depth_avg > 0) & (depth_avg < self.max_depth_mm)
+        if mask is not None:
+            valid = valid & (mask > 0)
+            
         rows, cols = np.where(valid)
         depths = depth_avg[valid]
 
