@@ -44,33 +44,46 @@ Kinect V2 (USB 3.0) ──► Linux Host ──► Arduino Nano (USB Serial)
 
 ## Prerequisites
 
+- **Pop!_OS** or Ubuntu 22.04+ (tested on Pop!_OS 24.04)
 - **Python 3.8+** (tested on 3.12)
-- **Linux** with USB 3.0 support
-- **libfreenect2** built from source (see installation below)
-- Kinect V2 connected via USB 3.0
-- (Optional) Arduino Nano connected via USB
+- **USB 3.0 port** for the Kinect V2
+- (Optional) Arduino Nano connected via USB for motor control
 
-## Software Setup
+## Installation
+
+Two scripts handle the full setup. Run them **in order** from the project root:
+
+### Step 1 — Python environment
 
 ```bash
-# 1. Enter the project directory
 cd Control/
+chmod +x install.sh install_kinect.sh
 
-# 2. Install libfreenect2 and pylibfreenect2
-chmod +x install_kinect.sh
-./install_kinect.sh
-
-# 3. Create a virtual environment (if not already done)
-python3 -m venv .venv
-
-# 4. Activate it
-source .venv/bin/activate
-
-# 5. Install all Python dependencies
-pip install -r requirements.txt
+# Creates .venv, installs Python packages (opencv, numpy, pyserial, pyyaml)
+./install.sh
 ```
 
-> **Note:** `libfreenect2` requires USB 3.0 and specific system libraries. The `install_kinect.sh` script handles all of this automatically, including udev rules for non-root access.
+This will:
+1. Verify `python3` and `python3-venv` are available
+2. Create a `.venv/` virtual environment
+3. Install all Python dependencies from `requirements.txt`
+4. Add your user to the `dialout` group (for Arduino serial access)
+
+### Step 2 — Kinect V2 driver
+
+```bash
+# Builds libfreenect2 from source, installs udev rules, installs pylibfreenect2
+./install_kinect.sh
+```
+
+This will:
+1. Install system build dependencies (`cmake`, `libusb`, `libglfw3`, etc.)
+2. Clone and build [libfreenect2](https://github.com/OpenKinect/libfreenect2) to `~/libfreenect2/`
+3. Install udev rules for non-root Kinect access
+4. Set `LD_LIBRARY_PATH` in `~/.bashrc` and the venv's `activate` script
+5. Build and install `pylibfreenect2` into the project venv
+
+> **After the first install:** unplug and replug the Kinect V2 for udev rules to take effect, then run `source ~/.bashrc` or open a new terminal.
 
 ### Dependencies
 
@@ -79,8 +92,8 @@ pip install -r requirements.txt
 | Python | ≥3.8 | Runtime |
 | OpenCV (`cv2`) | ≥4.5 | Vision, GUI, ArUco detection, Kalman filter |
 | NumPy | ≥1.20 | Array math |
-| pylibfreenect2 | any | Kinect V2 interface (mandatory) |
-| libfreenect2 | latest | C++ library for Kinect V2 (build from source) |
+| pylibfreenect2 | 0.1.4 | Kinect V2 interface (installed by `install_kinect.sh`) |
+| libfreenect2 | latest | C++ library for Kinect V2 (built from source) |
 | pyserial | any | Arduino communication (optional — degrades gracefully) |
 | PyYAML | any | Configuration loading |
 
@@ -91,10 +104,11 @@ All tunable parameters live in `config.yaml` at the project root. Key settings:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `kinect_pipeline` | `opengl` | Processing backend: `opengl`, `opencl`, or `cpu` |
-| `aruco_dict` | `DICT_4X4_50` | OpenCV ArUco dictionary for tag detection |
+| `aruco_dict` | `DICT_APRILTAG_25H9` | OpenCV ArUco dictionary for tag detection |
 | `robot_tag_top` | `0` | ArUco ID on top of robot |
 | `robot_tag_bottom` | `1` | ArUco ID on bottom of robot |
-| `detect_on_ir` | `true` | Detect tags on IR stream (lighting-independent) |
+| `detect_on_ir` | `false` | Detect tags on IR stream (`true`) or color stream (`false`) |
+| `flip_horizontal` | `true` | Mirror all frames (Kinect mounted inverted) |
 | `arena_tl` / `arena_br` | [50,50] / [462,374] | Arena bounds in depth-frame pixel coordinates |
 | `robot_offset` | `20` | Safety inset from arena edge (px) |
 | `max_drive_speed` / `max_turn_speed` | `400` | Max PWM offset from neutral |
@@ -104,17 +118,26 @@ See `config.yaml` for the full list with comments.
 
 ## Running the Application
 
+> **Important:** Always run commands using `.venv/bin/python3` (or activate the venv first with `source .venv/bin/activate`). Using the system `python3` directly will likely segfault due to incompatible system OpenCV libraries.
+
 ### Quick Start — Kinect Viewer
 
 ```bash
-# Make sure your venv is active
+# Option A: Run directly (recommended, no activation needed)
+.venv/bin/python3 -m robot_control.vision.kinect_viewer
+
+# Option B: Activate venv first
 source .venv/bin/activate
+python3 -m robot_control.vision.kinect_viewer
 
-# View all Kinect streams (Color, Depth, IR, Registered)
-python -m robot_control.vision.kinect_viewer
+# With a specific pipeline backend (if OpenGL causes issues)
+.venv/bin/python3 -m robot_control.vision.kinect_viewer --pipeline cpu
+```
 
-# With a specific pipeline backend
-python -m robot_control.vision.kinect_viewer --pipeline cpu
+### Full Autonomous Controller
+
+```bash
+.venv/bin/python3 -m robot_control
 ```
 
 ### Viewer Controls
@@ -122,6 +145,10 @@ python -m robot_control.vision.kinect_viewer --pipeline cpu
 | Key | Action |
 |-----|--------|
 | `Q` | Quit |
+| `Left Click` | Select ground calibration points (4 required), then lock onto obstacle |
+| `Middle Click` | Exclude an obstacle from tracking |
+| `Right Click` | Clear target lock |
+| `Space` | Toggle autonomous mode (main controller only) |
 
 ### Pre-Flight Checklist
 
@@ -136,19 +163,19 @@ Before launching, verify:
 ### Running Tests
 
 ```bash
-source .venv/bin/activate
-python3 -m pytest tests/ -v
+.venv/bin/python3 -m pytest tests/ -v
 ```
 
 ### Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
+| `Segmentation fault` | You're using the system Python, not the venv. Use `.venv/bin/python3` |
 | `No Kinect V2 devices found` | Check USB 3.0 connection; ensure udev rules are installed |
-| `No module named pylibfreenect2` | Run `./install_kinect.sh` or `pip install pylibfreenect2` |
+| `No module named pylibfreenect2` | Run `./install_kinect.sh` |
 | `OpenGL pipeline not available` | Try `--pipeline cpu`; install OpenGL dev libraries |
 | `Kinect V2 timed out` | Ensure no other process is using the Kinect |
-| `Permission denied` | Run `sudo cp libfreenect2/platform/linux/udev/90-kinect2.rules /etc/udev/rules.d/` and replug |
+| `Permission denied` | Replug the Kinect after `install_kinect.sh`; check udev rules |
 | Low FPS | Try `--pipeline opengl` for GPU acceleration |
 
 ## Architecture

@@ -2,10 +2,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # install_kinect.sh — Install libfreenect2 and pylibfreenect2 on Ubuntu/Debian
 #
-# Prerequisites:
-#   sudo apt install build-essential cmake pkg-config \
-#       libusb-1.0-0-dev libturbojpeg0-dev libglfw3-dev \
-#       libva-dev libjpeg-dev libopenni2-dev
+# Run install.sh FIRST to create the Python virtual environment.
 #
 # For OpenCL support (optional, for GPU depth processing):
 #   sudo apt install beignet-dev  # Intel
@@ -19,23 +16,32 @@ set -euo pipefail
 
 FREENECT2_DIR="${HOME}/libfreenect2"
 INSTALL_PREFIX="/usr/local"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_PIP="${SCRIPT_DIR}/.venv/bin/pip"
 
 echo "============================================"
 echo "  Kinect V2 Setup — libfreenect2 + Python"
 echo "============================================"
 echo ""
 
+# ── Pre-check: venv must exist ───────────────────────────────────────────────
+if [ ! -f "${VENV_PIP}" ]; then
+    echo "ERROR: Project virtual environment not found at ${SCRIPT_DIR}/.venv"
+    echo "Run install.sh first to create it."
+    exit 1
+fi
+
 # ── Step 1: Install system dependencies ──────────────────────────────────────
-echo "[1/5] Installing system dependencies..."
+echo "[1/6] Installing system dependencies..."
 sudo apt-get update -qq
 sudo apt-get install -y -qq \
-    build-essential cmake pkg-config \
+    git build-essential cmake pkg-config \
     libusb-1.0-0-dev libturbojpeg0-dev libglfw3-dev \
     libva-dev libjpeg-dev libopenni2-dev
 
 # ── Step 2: Clone and build libfreenect2 ─────────────────────────────────────
 echo ""
-echo "[2/5] Building libfreenect2..."
+echo "[2/6] Building libfreenect2..."
 if [ -d "${FREENECT2_DIR}" ]; then
     echo "  libfreenect2 directory already exists at ${FREENECT2_DIR}"
     echo "  Pulling latest changes..."
@@ -52,7 +58,7 @@ sudo make install
 
 # ── Step 3: Set up udev rules (non-root Kinect access) ──────────────────────
 echo ""
-echo "[3/5] Installing udev rules for non-root Kinect access..."
+echo "[3/6] Installing udev rules for non-root Kinect access..."
 sudo cp "${FREENECT2_DIR}/platform/linux/udev/90-kinect2.rules" /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 sudo udevadm trigger
@@ -60,7 +66,7 @@ echo "  NOTE: You may need to unplug and replug the Kinect for rules to take eff
 
 # ── Step 4: Set environment variables ────────────────────────────────────────
 echo ""
-echo "[4/5] Setting environment variables..."
+echo "[4/6] Setting environment variables..."
 PROFILE_LINE="export LIBFREENECT2_INSTALL_PREFIX=${INSTALL_PREFIX}"
 LD_LINE="export LD_LIBRARY_PATH=\${LD_LIBRARY_PATH:+\$LD_LIBRARY_PATH:}${INSTALL_PREFIX}/lib"
 
@@ -80,17 +86,9 @@ export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}${INSTALL_PREFIX}/l
 
 # ── Step 5: Install Python package ──────────────────────────────────────────
 echo ""
-echo "[5/5] Installing pylibfreenect2 Python package..."
+echo "[5/6] Installing pylibfreenect2 Python package..."
 
-# Use the project venv if it exists.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_PIP="${SCRIPT_DIR}/.venv/bin/pip"
-
-if [ ! -f "${VENV_PIP}" ]; then
-    echo "  ERROR: project venv not found at ${SCRIPT_DIR}/.venv"
-    echo "  Create it first: python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"
-    exit 1
-fi
+# Use the project venv (already checked at top of script).
 echo "  Using project venv at ${SCRIPT_DIR}/.venv"
 
 # pylibfreenect2 0.1.4 requires:
