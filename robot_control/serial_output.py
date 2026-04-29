@@ -1,15 +1,12 @@
 """
 serial_output.py — Non-blocking serial writer for the Arduino Nano.
 
-Sends single-character commands at 9600 baud to the Arduino PPM trainer.
-The Arduino increments/decrements channel values by STEP per character.
+Sends direct channel PWM values at 9600 baud to the Arduino PPM trainer.
 
-Protocol (single characters, 9600 baud):
-  w/s = drive forward/back (CH2 ± STEP)
-  a/d = steer left/right   (CH1 ± STEP)
-  x/z = weapon on/off      (CH3 = 2000/1000)
-  c   = center steer+drive  (CH1,CH2 → neutral)
-  ' ' = emergency stop      (all neutral + weapon off)
+Protocol (line-based, 9600 baud):
+  CH:ch1,ch2,ch3,ch4,ch5,ch6\n
+  Each value is a PWM microsecond value clamped to [1000, 2000].
+  ch1=steer  ch2=drive  ch3=weapon  ch4=unused  ch5=arm  ch6=enable
 """
 
 from __future__ import annotations
@@ -48,12 +45,10 @@ except ImportError:
 
 
 class ArduinoSerial:
-    """Non-blocking serial writer using single-character command protocol.
+    """Non-blocking serial writer using direct channel value protocol.
 
-    Translates absolute PWM values from the control system into the
-    character-based protocol expected by the Arduino PPM trainer sketch.
-    The Arduino maintains its own channel state and increments/decrements
-    by STEP per character received.
+    Sends absolute PWM values directly to the Arduino as a comma-separated
+    line: ``CH:ch1,ch2,ch3,ch4,ch5,ch6\\n``.
     """
 
     def __init__(self, cfg: Config) -> None:
@@ -65,13 +60,7 @@ class ArduinoSerial:
         self._last_send_time: float = time.time()
         self._send_time_lock = threading.Lock()
 
-        # Track what the Arduino's channel state should be, so we can
-        # compute the minimal character sequence to reach a target value.
         self._neutral = cfg.pwm_neutral
-        self._step = cfg.arduino_step
-        self._ch1 = cfg.pwm_neutral   # steer (Arduino side)
-        self._ch2 = cfg.pwm_neutral   # drive (Arduino side)
-        self._ch3 = cfg.weapon_off_value  # weapon (Arduino side)
 
         # Reversal config
         self._reverse_steer = cfg.channel_reverse_steer
@@ -131,68 +120,26 @@ class ArduinoSerial:
             ch3 = 2 * self._neutral - ch3
         return clamp_pwm(ch1), clamp_pwm(ch2), clamp_pwm(ch3)
 
-    def _build_char_command(self, target_ch1: int, target_ch2: int, target_ch3: int) -> bytes:
-        """Build a character command string to move from current state toward target."""
-        chars: list[str] = []
-
-        # Steer (CH1): 'a' = decrease, 'd' = increase
-        diff1 = target_ch1 - self._ch1
-        if abs(diff1) >= self._step:
-            n = min(abs(diff1) // self._step, 8)  # cap chars per update
-            char = "d" if diff1 > 0 else "a"
-            chars.extend([char] * n)
-            self._ch1 += n * self._step * (1 if diff1 > 0 else -1)
-            self._ch1 = clamp_pwm(self._ch1)
-
-        # Drive (CH2): 'w' = increase, 's' = decrease
-        diff2 = target_ch2 - self._ch2
-        if abs(diff2) >= self._step:
-            n = min(abs(diff2) // self._step, 8)
-            char = "w" if diff2 > 0 else "s"
-            chars.extend([char] * n)
-            self._ch2 += n * self._step * (1 if diff2 > 0 else -1)
-            self._ch2 = clamp_pwm(self._ch2)
-
-        # Weapon (CH3): absolute set via 'x' (on) or 'z' (off)
-        if target_ch3 != self._ch3:
-            if target_ch3 >= 1500:
-                chars.append("x")
-            else:
-                chars.append("z")
-            self._ch3 = target_ch3
-
-        # If neutral requested and we're close, use 'c' for exact snap
-        if (target_ch1 == self._neutral and target_ch2 == self._neutral
-                and abs(self._ch1 - self._neutral) < self._step * 2
-                and abs(self._ch2 - self._neutral) < self._step * 2):
-            chars = ["c"]
-            self._ch1 = self._neutral
-            self._ch2 = self._neutral
-
-        return "".join(chars).encode() if chars else b""
-
     def send(self, ch1: int, ch2: int, ch3: int) -> None:
         """Queue a command. Values are absolute PWM (1000–2000 µs).
 
-        Internally translates to the character protocol expected by the Arduino.
+        Internally formats as ``CH:ch1,ch2,ch3,ch4,ch5,ch6\\n`` for the
+        Arduino direct channel protocol.
         Channel reversal is applied based on config settings.
         """
         ch1 = clamp_pwm(ch1)
         ch2 = clamp_pwm(ch2)
         ch3 = clamp_pwm(ch3)
         ch1, ch2, ch3 = self._apply_reversal(ch1, ch2, ch3)
-        msg = self._build_char_command(ch1, ch2, ch3)
-        if msg:
-            with self._lock:
-                self._queue.append(msg)
+        msg = f"CH:{ch1},{ch2},{ch3},{self._neutral},1800,2000\n"
+        with self._lock:
+            self._queue.append(msg.encode())
 
     def send_neutral(self) -> None:
         """Send neutral on all channels."""
+        msg = f"CH:{self._neutral},{self._neutral},1000,{self._neutral},1800,2000\n"
         with self._lock:
-            self._queue.append(b" ")  # emergency stop char
-        self._ch1 = self._neutral
-        self._ch2 = self._neutral
-        self._ch3 = self._cfg.weapon_off_value
+            self._queue.append(msg.encode())
 
     @property
     def last_send_age_ms(self) -> float:

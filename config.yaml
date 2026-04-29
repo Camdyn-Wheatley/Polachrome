@@ -47,7 +47,6 @@ weapon_off_value: 1000
 # ── Arduino serial ───────────────────────────────────────────────────────────
 arduino_port: null               # null for auto-detect
 arduino_baud: 9600
-arduino_step: 5                  # PWM µs per character command
 
 # ── Channel reversal ────────────────────────────────────────────────────────
 channel_reverse_steer: false

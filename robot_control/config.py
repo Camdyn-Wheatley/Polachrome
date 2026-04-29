@@ -67,7 +67,6 @@ class Config:
     # ── Arduino serial ───────────────────────────────────────────────────
     arduino_port: Optional[str] = None
     arduino_baud: int = 9600
-    arduino_step: int = 5
 
     # ── Channel reversal ─────────────────────────────────────────────────
     channel_reverse_steer: bool = False
