@@ -246,10 +246,10 @@ def main() -> None:
         logger.error("Failed to start Kinect: %s", exc)
         sys.exit(1)
 
-    cv2.namedWindow("Color", cv2.WINDOW_NORMAL)
-    cv2.namedWindow("Depth", cv2.WINDOW_NORMAL)
-    cv2.namedWindow("IR + ArUco", cv2.WINDOW_NORMAL)
-    cv2.namedWindow("Registered + ArUco", cv2.WINDOW_NORMAL)
+    cv2.namedWindow("Color", cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+    cv2.namedWindow("Depth", cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+    cv2.namedWindow("IR + ArUco", cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+    cv2.namedWindow("Registered + ArUco", cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
     cv2.namedWindow("Settings", cv2.WINDOW_NORMAL)
 
     cv2.resizeWindow("Color", 960, 540)
