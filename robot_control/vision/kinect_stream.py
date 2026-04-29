@@ -321,7 +321,10 @@ class KinectStream:
                     try:
                         raw = frames[FrameType.Color]
                         # Kinect color is BGRX (4-channel); drop the X channel.
-                        color_arr = raw.asarray(np.uint8)[:, :, :3].copy()
+                        # asarray may return (1080, 1920, 4) or a flat/2D buffer
+                        # depending on the driver — always reshape explicitly.
+                        buf = raw.asarray(np.uint8)
+                        color_arr = buf.reshape((raw.height, raw.width, 4))[:, :, :3].copy()
                     except KeyError:
                         pass
 
